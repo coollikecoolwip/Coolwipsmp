@@ -1,4 +1,5 @@
 name: Build CoolWips Economy
+# Build/publish current plugin version
 
 on:
   push:
