@@ -233,7 +233,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private void showPrices(CommandSender s, int page) {
         List<Map.Entry<Material, Long>> list = prices.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey(Comparator.comparing(Enum::name))).toList();
+                .sorted(Comparator.comparing(e -> e.getKey().name())).toList();
         int pages = Math.max(1, (int)Math.ceil(list.size() / (double)pricesPerPage));
         if (page > pages) { s.sendMessage("§cThat page doesn't exist. Pages: " + pages); return; }
         s.sendMessage("§6§lCoolWips Economy Prices §7(Page " + page + "/" + pages + ")");
