@@ -16,3 +16,7 @@ prices:
   GOLD_INGOT: 40
   COAL: 8
   WHEAT: 5
+
+maintenance:
+  all-sells-disabled: false
+  blocked-items: []
