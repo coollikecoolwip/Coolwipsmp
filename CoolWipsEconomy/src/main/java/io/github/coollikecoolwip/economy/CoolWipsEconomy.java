@@ -50,6 +50,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/prices.txt").trim();
         baseUrl = getConfig().getString("api.base-url", "https://unbelievaboat.com/api/v1").replaceAll("/+$", "");
         reason = getConfig().getString("api.reason", "CoolWips SMP Minecraft sale");
+        buyReason = getConfig().getString("api.buy-reason", "CoolWips SMP Minecraft shop purchase");
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
