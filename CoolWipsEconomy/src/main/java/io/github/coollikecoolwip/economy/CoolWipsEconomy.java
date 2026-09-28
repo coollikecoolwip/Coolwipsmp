@@ -32,6 +32,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Set<Material> maintenanceBlocks = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> lastTransaction = new ConcurrentHashMap<>();
     private final Map<UUID, PendingSale> pendingSales = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingTrade> pendingTrades = new ConcurrentHashMap<>();
     private final Deque<Transaction> history = new ArrayDeque<>();
     private int transactionCooldownMs;
     private int confirmationSeconds;
@@ -42,7 +43,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -281,6 +282,31 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return true;
             }
 
+            case "pay" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /pay.");
+                    return true;
+                }
+                if (args.length == 1 && args[0].equalsIgnoreCase("confirm")) {
+                    payConfirm(p);
+                    return true;
+                }
+                if (args.length == 1 && args[0].equalsIgnoreCase("cancel")) {
+                    pendingTrades.remove(p.getUniqueId());
+                    p.sendMessage("§7Pending item trade cancelled.");
+                    return true;
+                }
+                if (args.length < 2 || args.length > 3) {
+                    p.sendMessage("§cUsage: /pay <player> <item> [amount]");
+                    p.sendMessage("§7Example: /pay Steve diamond 5");
+                    return true;
+                }
+                int amount = parseAmount(p, args.length == 3 ? args[2] : "1");
+                if (amount < 1) return true;
+                createTrade(p, args[0], args[1], amount);
+                return true;
+            }
+
             case "shop" -> {
                 int page = parsePage(sender, args);
                 if (page < 1) return true;
@@ -503,6 +529,214 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
 
+    private void createTrade(Player buyer, String targetName, String rawItem, int amount) {
+        Player seller = Bukkit.getPlayerExact(targetName);
+        if (seller == null || !seller.isOnline()) {
+            buyer.sendMessage("§cThat player is not online.");
+            return;
+        }
+        if (seller.getUniqueId().equals(buyer.getUniqueId())) {
+            buyer.sendMessage("§cYou cannot trade with yourself.");
+            return;
+        }
+
+        Material material = matchMaterial(rawItem);
+        Long unit = material == null ? null : prices.get(material);
+        if (unit == null) {
+            buyer.sendMessage("§cThat item is not in the sell-price list.");
+            return;
+        }
+        if (amount > maxItems) {
+            buyer.sendMessage("§cYou can trade at most " + maxItems + " items at once.");
+            return;
+        }
+
+        long total;
+        try {
+            total = Math.multiplyExact(unit, amount);
+        } catch (ArithmeticException e) {
+            buyer.sendMessage("§cThat trade is too large.");
+            return;
+        }
+        if (total > maxMoney) {
+            buyer.sendMessage("§cThat trade exceeds the $"+money(maxMoney)+" transaction limit.");
+            return;
+        }
+        if (count(seller, material) < amount) {
+            buyer.sendMessage("§c" + seller.getName() + " does not have " + amount + "x " + pretty(material) + ".");
+            return;
+        }
+        if (!canFit(buyer, material, amount)) {
+            buyer.sendMessage("§cYou do not have enough inventory space for that item.");
+            return;
+        }
+
+        pendingTrades.put(buyer.getUniqueId(),
+                new PendingTrade(seller.getUniqueId(), seller.getName(), material.name(), amount, total,
+                        System.currentTimeMillis() + 30_000L));
+
+        buyer.sendMessage("§eTrade offer created:");
+        buyer.sendMessage("§7Buy §f" + amount + "x " + pretty(material) + " §7from §f" + seller.getName()
+                + " §7for §a$" + money(total) + "§7.");
+        buyer.sendMessage("§7Waiting for §f" + seller.getName() + "§7 to accept.");
+        seller.sendMessage("§e" + buyer.getName() + " wants to buy §f" + amount + "x "
+                + pretty(material) + " §efor §a$" + money(total) + "§e.");
+        seller.sendMessage("§7Use §f/pay confirm §7to accept or §f/pay cancel §7to decline.");
+    }
+
+    private void payConfirm(Player seller) {
+        PendingTrade trade = pendingTrades.values().stream()
+                .filter(t -> t.sellerUuid().equals(seller.getUniqueId()))
+                .findFirst()
+                .orElse(null);
+
+        if (trade == null || trade.expiresAt() < System.currentTimeMillis()) {
+            seller.sendMessage("§cYou have no pending item trade.");
+            return;
+        }
+
+        Player buyer = Bukkit.getPlayer(trade.buyerUuid());
+        if (buyer == null || !buyer.isOnline()) {
+            removeTrade(trade);
+            seller.sendMessage("§cThe buyer is no longer online.");
+            return;
+        }
+
+        Material material = Material.matchMaterial(trade.material());
+        if (material == null) {
+            removeTrade(trade);
+            seller.sendMessage("§cThat item is no longer valid.");
+            return;
+        }
+
+        if (count(seller, material) < trade.amount()) {
+            removeTrade(trade);
+            seller.sendMessage("§cYou no longer have enough of the requested item.");
+            buyer.sendMessage("§cThe trade was cancelled because the seller no longer has enough items.");
+            return;
+        }
+        if (!canFit(buyer, material, trade.amount())) {
+            removeTrade(trade);
+            seller.sendMessage("§cThe buyer no longer has enough inventory space.");
+            buyer.sendMessage("§cThe trade was cancelled because your inventory is full.");
+            return;
+        }
+
+        ReentrantLock buyerLock = locks.computeIfAbsent(buyer.getUniqueId(), k -> new ReentrantLock());
+        ReentrantLock sellerLock = locks.computeIfAbsent(seller.getUniqueId(), k -> new ReentrantLock());
+
+        ReentrantLock first = buyer.getUniqueId().toString().compareTo(seller.getUniqueId().toString()) < 0
+                ? buyerLock : sellerLock;
+        ReentrantLock second = first == buyerLock ? sellerLock : buyerLock;
+
+        if (!first.tryLock()) {
+            seller.sendMessage("§eThe buyer currently has another transaction processing.");
+            return;
+        }
+        if (!second.tryLock()) {
+            first.unlock();
+            seller.sendMessage("§eThe other player currently has another transaction processing.");
+            return;
+        }
+
+        removeTrade(trade);
+        String buyerDiscord = linkedId(buyer);
+        String sellerDiscord = linkedId(seller);
+        if (buyerDiscord == null || sellerDiscord == null) {
+            second.unlock();
+            first.unlock();
+            return;
+        }
+
+        seller.sendMessage("§7Processing the trade...");
+        buyer.sendMessage("§7Processing your trade with §f" + seller.getName() + "§7...");
+
+        final long total = trade.total();
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            HttpResult debit = api("PATCH", userUrl(buyerDiscord),
+                    "{\"cash\":" + (-total) + ",\"reason\":\"Player item trade purchase\"}");
+
+            if (!success(debit)) {
+                first.unlock();
+                second.unlock();
+                Bukkit.getScheduler().runTask(this, () -> {
+                    buyer.sendMessage("§cTrade cancelled. Buyer payment failed (HTTP " + debit.status + ").");
+                    seller.sendMessage("§cTrade cancelled because the buyer's payment failed.");
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!buyer.isOnline() || !seller.isOnline()
+                        || count(seller, material) < trade.amount()
+                        || !canFit(buyer, material, trade.amount())) {
+                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                    buyer.sendMessage("§cTrade cancelled. Conditions changed, so your payment is being reversed.");
+                    seller.sendMessage("§cTrade cancelled. Conditions changed, so the payment is being reversed.");
+                    first.unlock();
+                    second.unlock();
+                    return;
+                }
+
+                remove(seller, material, trade.amount());
+                Map<Integer, ItemStack> leftovers =
+                        buyer.getInventory().addItem(new ItemStack(material, trade.amount()));
+
+                if (!leftovers.isEmpty()) {
+                    // The inventory was checked immediately before the transfer. If Bukkit still reports
+                    // leftovers, put the items back with the seller before reversing the payment.
+                    seller.getInventory().addItem(new ItemStack(material, trade.amount()));
+                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                    buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
+                    seller.sendMessage("§cTrade cancelled because the item could not be delivered.");
+                    first.unlock();
+                    second.unlock();
+                    return;
+                }
+
+                Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                    HttpResult credit = api("PATCH", userUrl(sellerDiscord),
+                            "{\"cash\":" + total + ",\"reason\":\"Player item trade sale\"}");
+
+                    if (!success(credit)) {
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            Map<Integer, ItemStack> returned =
+                                    seller.getInventory().addItem(new ItemStack(material, trade.amount()));
+                            if (!returned.isEmpty()) {
+                                for (ItemStack stack : returned.values()) {
+                                    seller.getWorld().dropItemNaturally(seller.getLocation(), stack);
+                                }
+                            }
+                            buyer.sendMessage("§cSeller payment failed. Your payment is being reversed.");
+                            seller.sendMessage("§cTrade payment failed. The items were returned.");
+                            reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                            first.unlock();
+                            second.unlock();
+                        });
+                        return;
+                    }
+
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        record(new Transaction(buyer.getUniqueId(), buyer.getName(), material.name(),
+                                trade.amount(), total, true, new java.util.Date().toString()));
+                        record(new Transaction(seller.getUniqueId(), seller.getName(), material.name(),
+                                trade.amount(), total, false, new java.util.Date().toString()));
+                        buyer.sendMessage("§aTrade complete: §f" + trade.amount() + "x "
+                                + pretty(material) + " §afor §c$" + money(total) + "§a.");
+                        seller.sendMessage("§aTrade complete: §f" + trade.amount() + "x "
+                                + pretty(material) + " §afor §a$" + money(total) + "§a.");
+                        first.unlock();
+                        second.unlock();
+                    });
+                });
+            });
+        });
+    }
+
+    private void removeTrade(PendingTrade trade) {
+        pendingTrades.remove(trade.buyerUuid());
+    }
+
     private void buy(Player p, String raw, int requested) {
         if (shopPrices.isEmpty()) {
             p.sendMessage("§cThe shop prices have not loaded yet. Try /buy again in a few seconds.");
@@ -676,6 +910,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private record PendingSale(String material, int amount, long payout, long expiresAt) {}
+    private record PendingTrade(UUID buyerUuid, String sellerName, String material, int amount,
+                                long total, long expiresAt) {}
     private record Transaction(UUID uuid, String player, String material, int amount, long money,
                                boolean purchase, String timestamp) {}
 
@@ -854,6 +1090,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         if ((name.equals("prices") || name.equals("shop")) && args.length == 1) {
             return List.of("1", "2", "3", "4", "5");
+        }
+
+        if (name.equals("pay") && args.length == 1) {
+            return List.of("confirm", "cancel");
+        }
+
+        if (name.equals("pay") && args.length == 2) {
+            String query = args[1].toUpperCase(Locale.ROOT);
+            return prices.keySet().stream().map(Enum::name)
+                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
         }
 
         if (name.equals("cweconomy") && args.length == 1) {
