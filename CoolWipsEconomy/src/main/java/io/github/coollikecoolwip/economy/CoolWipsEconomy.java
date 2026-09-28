@@ -20,6 +20,7 @@ import java.util.regex.Pattern;
 public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter {
     private static final Pattern CASH = Pattern.compile("\"cash\"\\s*:\\s*(-?\\d+)");
     private final Map<Material, Long> prices = new ConcurrentHashMap<>();
+    private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
     private String token, guildId, baseUrl, reason, pricesUrl;
