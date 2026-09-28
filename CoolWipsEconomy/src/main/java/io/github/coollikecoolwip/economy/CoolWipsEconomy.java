@@ -232,6 +232,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     sender.sendMessage("Only players can use /sell.");
                     return true;
                 }
+                if (args.length == 1 && args[0].equalsIgnoreCase("confirm")) {
+                    sell(p, "", -2);
+                    return true;
+                }
                 if (args.length < 1 || args.length > 2) {
                     p.sendMessage("§cUsage: /sell <item> [amount]");
                     return true;
