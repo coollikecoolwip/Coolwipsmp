@@ -11,6 +11,10 @@ settings:
   maximum-items-per-sale: 2304
   maximum-money-per-sale: 1000000
   prices-per-page: 15
+  transaction-cooldown-ms: 1500
+  confirmation-seconds: 10
+  sell-tax: 0.05
+  buy-tax: 0.05
 prices:
   DIAMOND: 250
   IRON_INGOT: 25
