@@ -70,6 +70,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
         prices.clear();
         prices.putAll(fallback);
+        shopPrices.clear();
+        var shop = getConfig().getConfigurationSection("shop");
+        if (shop != null) for (String key : shop.getKeys(false)) {
+            Material m = Material.matchMaterial(key);
+            long p = getConfig().getLong("shop." + key);
+            if (m != null && p > 0) shopPrices.put(m, p);
+        }
     }
 
     private int timeout() { return Math.max(5, getConfig().getInt("api.timeout-seconds", 15)); }
