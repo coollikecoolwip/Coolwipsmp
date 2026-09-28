@@ -31,19 +31,30 @@ jobs:
         with:
           distribution: temurin
           java-version: '25'
+          cache: maven
+          cache-dependency-path: CoolWipsEconomy/pom.xml
 
       - name: Build
-        run: mvn -U clean package
+        run: mvn -U --batch-mode clean package
 
-      - name: Find built JAR
+      - name: Verify built JAR
         id: jar
-        run: echo "path=$(find target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' | head -n 1)" >> "$GITHUB_OUTPUT"
+        shell: bash
+        run: |
+          JAR="$(find target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -n 1)"
+          if [ -z "$JAR" ]; then
+            echo "No CoolWipsEconomy JAR was produced."
+            exit 1
+          fi
+          echo "Built $JAR"
+          echo "path=$JAR" >> "$GITHUB_OUTPUT"
 
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
           name: CoolWipsEconomy
           path: CoolWipsEconomy/${{ steps.jar.outputs.path }}
+          if-no-files-found: error
 
       - name: Put plugin JAR in repository
         working-directory: .
@@ -53,7 +64,7 @@ jobs:
           cp "$JAR" "CoolWipsEconomy/$(basename "$JAR")"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -- 'CoolWipsEconomy/CoolWipsEconomy-*.jar'
+          git add CoolWipsEconomy/*.jar
           if git diff --cached --quiet; then
             echo "JAR is already up to date."
           else
