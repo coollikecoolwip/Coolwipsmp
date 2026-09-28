@@ -1,5 +1,6 @@
 api-token: "PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE"
 guild-id: "1025178490481418280"
+prices-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/prices.txt"
 api:
   base-url: "https://unbelievaboat.com/api/v1"
   timeout-seconds: 15
@@ -8,63 +9,10 @@ settings:
   maximum-items-per-sale: 2304
   maximum-money-per-sale: 1000000
   prices-per-page: 15
+# Local fallback prices. GitHub prices.txt replaces these after it loads.
 prices:
-  COAL: 8
-  COPPER_INGOT: 12
+  DIAMOND: 250
   IRON_INGOT: 25
   GOLD_INGOT: 40
-  REDSTONE: 15
-  LAPIS_LAZULI: 15
-  DIAMOND: 250
-  EMERALD: 400
-  QUARTZ: 20
-  ANCIENT_DEBRIS: 1500
-  NETHERITE_SCRAP: 375
+  COAL: 8
   WHEAT: 5
-  CARROT: 5
-  POTATO: 5
-  BEETROOT: 5
-  MELON_SLICE: 2
-  PUMPKIN: 15
-  SUGAR_CANE: 5
-  BAMBOO: 3
-  CACTUS: 5
-  COCOA_BEANS: 8
-  BEEF: 12
-  PORKCHOP: 12
-  CHICKEN: 10
-  MUTTON: 12
-  RABBIT: 15
-  LEATHER: 20
-  FEATHER: 8
-  WOOL: 15
-  EGG: 5
-  ROTTEN_FLESH: 3
-  BONE: 8
-  ARROW: 8
-  STRING: 10
-  SPIDER_EYE: 12
-  GUNPOWDER: 30
-  ENDER_PEARL: 75
-  BLAZE_ROD: 100
-  SLIME_BALL: 50
-  MAGMA_CREAM: 75
-  GHAST_TEAR: 250
-  OAK_LOG: 8
-  SPRUCE_LOG: 8
-  BIRCH_LOG: 8
-  JUNGLE_LOG: 8
-  ACACIA_LOG: 8
-  DARK_OAK_LOG: 8
-  MANGROVE_LOG: 8
-  CHERRY_LOG: 8
-  CRIMSON_STEM: 10
-  WARPED_STEM: 10
-  CLAY_BALL: 5
-  BRICK: 10
-  GLASS: 5
-  PAPER: 8
-  BOOK: 20
-  PRISMARINE_SHARD: 25
-  PRISMARINE_CRYSTALS: 30
-  NAUTILUS_SHELL: 200
