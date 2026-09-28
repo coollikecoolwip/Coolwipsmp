@@ -651,7 +651,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                             entry.getValue(), itemPayout, false, new java.util.Date().toString()));
                 }
 
-                player.sendMessage("§aSell chest sold §f" + totalItems + " items §afor §a$"
+                player.sendMessage("§aSell chest sold §f" + finalTotalItems + " items §afor §a$"
                         + money(finalPayout) + "§a.");
                 lock.unlock();
             });
