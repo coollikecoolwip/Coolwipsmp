@@ -10,7 +10,7 @@ Requirements:
 
 Install:
 1. Build with build.bat.
-2. Put the built `target/CoolWipsEconomy-1.0.10.jar` in `plugins/`.
+2. Put the built `target/CoolWipsEconomy-1.0.11.jar` in `plugins/`.
 3. Start the server once.
 4. Open plugins/CoolWipsEconomy/config.yml.
 5. Put your UnbelievaBoat API token in api-token.
@@ -26,6 +26,7 @@ Commands:
 - /buy <item> [amount]
 - /shop [page]
 - /pay <player> <item> [amount]
+- /sellchest create|remove|status
 - /cweconomy reload
 - /cweconomy status
 
@@ -36,3 +37,5 @@ Important: never commit a real API token to a public GitHub repository.
 Sales and purchases are serialized per player. The configured buy tax is applied to shop purchases. Player trades preserve the full ItemStack metadata. Items are removed only after UnbelievaBoat confirms payment. If the items disappear before removal, the plugin attempts to reverse the payment.
 
 Edit prices.txt in this folder on GitHub, then run /cweconomy reload.
+
+Sell chests: use `/sellchest create` while looking at a chest. Put items with a sell price inside, then close the chest. The priced items are automatically sold for the normal `/sell` price after tax; items without a sell price stay in the chest. Only the owner can open or break the sell chest (operators can manage it).
