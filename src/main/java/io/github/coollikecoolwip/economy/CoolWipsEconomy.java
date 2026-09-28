@@ -25,6 +25,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private String token, guildId, baseUrl, reason, pricesUrl;
     private int maxItems, pricesPerPage;
     private long maxMoney;
+    private boolean sellsDisabled;
+    private final Set<Material> maintenanceBlocks = ConcurrentHashMap.newKeySet();
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -34,7 +36,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             PluginCommand c = getCommand(name);
             if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
         }
-        getLogger().info("CoolWips Economy enabled. " + prices.size() + " fallback prices loaded.");
+        getLogger().info("CoolWips Economy enabled. " + prices.size() + " fallback prices loaded. Sale maintenance: " + (sellsDisabled ? "ALL BLOCKED" : "enabled") + ".");
         if (tokenMissing()) getLogger().warning("Set your UnbelievaBoat API token in config.yml.");
         loadRemotePrices();
     }
@@ -50,6 +52,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
+        sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
+        maintenanceBlocks.clear();
+        for (String name : getConfig().getStringList("maintenance.blocked-items")) {
+            Material m = Material.matchMaterial(name.replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT));
+            if (m != null) maintenanceBlocks.add(m);
+        }
 
         Map<Material, Long> fallback = new HashMap<>();
         var section = getConfig().getConfigurationSection("prices");
@@ -191,11 +199,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 balance(p); return true;
             }
             case "cweconomy" -> {
-                if (args.length != 1 || (!args[0].equalsIgnoreCase("reload") && !args[0].equalsIgnoreCase("status"))) {
+                if (args.length < 1 || (!args[0].equalsIgnoreCase("reload") && !args[0].equalsIgnoreCase("status") && !args[0].equalsIgnoreCase("maintenance"))) {
                     sender.sendMessage("§e/cweconomy reload §7- reload prices/config");
                     sender.sendMessage("§e/cweconomy status §7- test API");
+                    sender.sendMessage("§e/cweconomy maintenance §7- manage sale maintenance");
                     return true;
                 }
+                if (args[0].equalsIgnoreCase("maintenance")) { maintenance(sender, args); return true; }
                 if (args[0].equalsIgnoreCase("reload")) {
                     loadSettings();
                     loadRemotePrices();
@@ -207,8 +217,41 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void maintenance(CommandSender s, String[] args) {
+        if (!s.isOp()) { s.sendMessage("§cOnly server operators can use sale maintenance."); return; }
+        if (args.length == 1 || args[1].equalsIgnoreCase("status")) {
+            s.sendMessage("§6Sale maintenance: " + (sellsDisabled ? "§cALL SELLS BLOCKED" : "§aALL SELLS ENABLED"));
+            s.sendMessage("§7Blocked items: §f" + (maintenanceBlocks.isEmpty() ? "none" : maintenanceBlocks.stream().map(this::pretty).sorted().reduce((a,b) -> a + ", " + b).orElse("none")));
+            return;
+        }
+        String action = args[1].toLowerCase(Locale.ROOT);
+        if (action.equals("on") || action.equals("off")) {
+            sellsDisabled = action.equals("on");
+            getConfig().set("maintenance.all-sells-disabled", sellsDisabled);
+            saveConfig();
+            s.sendMessage(sellsDisabled ? "§cAll selling is now BLOCKED." : "§aAll selling is now ENABLED.");
+            return;
+        }
+        if ((action.equals("block") || action.equals("unblock")) && args.length >= 3) {
+            Material m = Material.matchMaterial(String.join("_", Arrays.copyOfRange(args, 2, args.length)).replace("-", "_").toUpperCase(Locale.ROOT));
+            if (m == null) { s.sendMessage("§cUnknown item."); return; }
+            if (action.equals("block")) { maintenanceBlocks.add(m); s.sendMessage("§cSelling " + pretty(m) + " is now BLOCKED."); }
+            else { maintenanceBlocks.remove(m); s.sendMessage("§aSelling " + pretty(m) + " is now ENABLED."); }
+            getConfig().set("maintenance.blocked-items", maintenanceBlocks.stream().map(Enum::name).sorted().toList());
+            saveConfig();
+            return;
+        }
+        s.sendMessage("§e/cweconomy maintenance on §7- block all sells");
+        s.sendMessage("§e/cweconomy maintenance off §7- allow all sells");
+        s.sendMessage("§e/cweconomy maintenance block <item> §7- block one item");
+        s.sendMessage("§e/cweconomy maintenance unblock <item> §7- allow one item");
+        s.sendMessage("§e/cweconomy maintenance status §7- show maintenance status");
+    }
+
     private void sell(Player p, String raw, int requested) {
         Material m = Material.matchMaterial(raw.replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT));
+        if (sellsDisabled) { p.sendMessage("§cSelling is currently disabled for maintenance."); return; }
+        if (m != null && maintenanceBlocks.contains(m)) { p.sendMessage("§cSelling " + pretty(m) + " is currently disabled for maintenance."); return; }
         Long unit = m == null ? null : prices.get(m);
         if (unit == null) { p.sendMessage("§cThat item cannot be sold. Use /prices."); return; }
         if (unit <= 0) { p.sendMessage("§cThat item has no sell value."); return; }
@@ -343,7 +386,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return prices.keySet().stream().map(Enum::name).filter(x -> x.startsWith(q)).sorted().limit(50).toList();
         }
         if (n.equals("prices") && args.length == 1) return List.of("1","2","3","4","5");
-        if (n.equals("cweconomy") && args.length == 1) return List.of("reload","status");
+        if (n.equals("cweconomy") && args.length == 1) return List.of("reload","status","maintenance");
+        if (n.equals("cweconomy") && args.length == 2 && args[0].equalsIgnoreCase("maintenance")) return List.of("on","off","block","unblock","status");
         return List.of();
     }
 
