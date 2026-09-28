@@ -213,7 +213,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private String json(String value) {
-        return value.replace("\\", "\\\\").replace(""", "\\"");
+        return value.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
@@ -359,24 +359,40 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void sell(Player p, String raw, int requested) {
-        Material material = matchMaterial(raw);
+        Material material;
+        int amount;
+
+        if (requested == -2) {
+            PendingSale pending = pendingSales.remove(p.getUniqueId());
+            if (pending == null || pending.expiresAt < System.currentTimeMillis()) {
+                p.sendMessage("§cNo sale is waiting for confirmation.");
+                return;
+            }
+            material = Material.matchMaterial(pending.material);
+            amount = pending.amount;
+        } else {
+            material = matchMaterial(raw);
+            if (material == null) {
+                p.sendMessage("§cUnknown item. Use /prices.");
+                return;
+            }
+            amount = requested == -1 ? count(p, material) : requested;
+        }
 
         if (sellsDisabled) {
             p.sendMessage("§cSelling is currently disabled for maintenance.");
             return;
         }
-        if (material != null && maintenanceBlocks.contains(material)) {
+        if (maintenanceBlocks.contains(material)) {
             p.sendMessage("§cSelling " + pretty(material) + " is currently disabled for maintenance.");
             return;
         }
 
-        Long unit = material == null ? null : prices.get(material);
+        Long unit = prices.get(material);
         if (unit == null) {
             p.sendMessage("§cThat item cannot be sold. Use /prices.");
             return;
         }
-
-        int amount = requested == -1 ? count(p, material) : requested;
         if (amount < 1) {
             p.sendMessage("§cYou don't have any " + pretty(material) + ".");
             return;
@@ -386,18 +402,35 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        long payout;
+        long gross;
         try {
-            payout = Math.multiplyExact(unit, amount);
+            gross = Math.multiplyExact(unit, amount);
         } catch (ArithmeticException e) {
             p.sendMessage("§cThat sale is too large.");
             return;
         }
-
-        if (payout > maxMoney) {
-            p.sendMessage("§cThat sale exceeds the $" + maxMoney + " payout limit.");
+        if (gross > maxMoney) {
+            p.sendMessage("§cThat sale exceeds the $" + money(maxMoney) + " payout limit.");
             return;
         }
+
+        long payout = afterTax(gross, sellTax);
+        if (payout < 1) {
+            p.sendMessage("§cThe sale value after tax is less than $1.");
+            return;
+        }
+
+        if (requested != -2 && confirmationSeconds > 0 && payout >= 10000) {
+            pendingSales.put(p.getUniqueId(),
+                    new PendingSale(material.name(), amount, payout,
+                            System.currentTimeMillis() + confirmationSeconds * 1000L));
+            p.sendMessage("§eConfirm sale: §f/sell confirm §7to sell " + amount + "x "
+                    + pretty(material) + " for §a$" + money(payout)
+                    + " §7(after " + Math.round(sellTax * 100) + "% tax).");
+            return;
+        }
+
+        if (!cooldownReady(p)) return;
 
         ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
         if (!lock.tryLock()) {
@@ -411,15 +444,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        p.sendMessage("§7Selling §f" + amount + "x " + pretty(material) + " §7for §a$" + payout + "§7...");
+        p.sendMessage("§7Selling §f" + amount + "x " + pretty(material)
+                + " §7for §a$" + money(payout) + " §7after tax...");
 
         final int finalAmount = amount;
-        final long money = payout;
+        final long finalMoney = payout;
         final Material finalMaterial = material;
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\"cash\":" + money + ",\"reason\":\"" + json(reason) + "\"}");
+                    "{\"cash\":" + finalMoney + ",\"reason\":\"" + json(reason) + "\"}");
 
             if (!success(result)) {
                 lock.unlock();
@@ -430,14 +464,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!p.isOnline() || count(p, finalMaterial) < finalAmount) {
-                    reverseMoney(discordId, money, "Sale reversal", lock, p);
+                    reverseMoney(discordId, finalMoney, "Sale reversal", lock, p);
                     p.sendMessage("§cItems were no longer available. Reversing payment...");
                     return;
                 }
 
                 remove(p, finalMaterial, finalAmount);
+                record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
+                        finalAmount, finalMoney, false, new java.util.Date().toString()));
                 p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
-                        + " §afor §a$" + money + "§a.");
+                        + " §afor §a$" + money(finalMoney) + "§a.");
                 lock.unlock();
             });
         });
