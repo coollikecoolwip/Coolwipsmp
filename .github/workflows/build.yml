@@ -4,9 +4,8 @@ on:
   push:
     paths:
       - 'CoolWipsEconomy/**'
+      - '!CoolWipsEconomy/*.jar'
       - '.github/workflows/build.yml'
-    paths-ignore:
-      - 'CoolWipsEconomy/*.jar'
   workflow_dispatch:
 
 permissions:
@@ -14,6 +13,7 @@ permissions:
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.event.head_commit.message != 'Update built CoolWips Economy JAR'
     runs-on: ubuntu-latest
     defaults:
       run:
