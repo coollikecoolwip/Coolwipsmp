@@ -24,6 +24,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
     private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl;
+    private static final String DEFAULT_PRICES_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt";
+    private static final String DEFAULT_SHOP_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt";
     private int maxItems, pricesPerPage;
     private long maxMoney;
     private boolean sellsDisabled;
@@ -64,8 +66,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         baseUrl = getConfig().getString("api.base-url", "https://unbelievaboat.com/api/v1").replaceAll("/+$", "");
         reason = getConfig().getString("api.reason", "CoolWips SMP Minecraft sale");
         buyReason = getConfig().getString("api.buy-reason", "CoolWips SMP Minecraft shop purchase");
-        pricesUrl = getConfig().getString("prices-url", "").trim();
-        shopUrl = getConfig().getString("shop-url", "").trim();
+        pricesUrl = getConfig().getString("prices-url", DEFAULT_PRICES_URL).trim();
+        shopUrl = getConfig().getString("shop-url", DEFAULT_SHOP_URL).trim();
+        if (pricesUrl.isBlank()) pricesUrl = DEFAULT_PRICES_URL;
+        if (shopUrl.isBlank()) shopUrl = DEFAULT_SHOP_URL;
 
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
@@ -145,7 +149,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void loadRemoteFile(String fileUrl, String label, Map<Material, Long> destination) {
-        if (fileUrl.isBlank()) return;
+        if (fileUrl.isBlank()) {
+            getLogger().warning("Remote " + label + " URL is blank.");
+            return;
+        }
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try {
@@ -277,6 +284,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case "shop" -> {
                 int page = parsePage(sender, args);
                 if (page < 1) return true;
+                if (shopPrices.isEmpty()) {
+                    sender.sendMessage("§cThe shop is still loading. Try /shop again in a few seconds.");
+                    return true;
+                }
                 showPaged(sender, shopPrices, page, "CoolWips Shop", "/shop");
                 return true;
             }
@@ -493,6 +504,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void buy(Player p, String raw, int requested) {
+        if (shopPrices.isEmpty()) {
+            p.sendMessage("§cThe shop prices have not loaded yet. Try /buy again in a few seconds.");
+            return;
+        }
         Material material = matchMaterial(raw);
         Long unit = material == null ? null : shopPrices.get(material);
 
