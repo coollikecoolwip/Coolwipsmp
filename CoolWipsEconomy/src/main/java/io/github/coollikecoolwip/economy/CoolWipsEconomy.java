@@ -688,14 +688,20 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
 
-                remove(seller, material, trade.amount());
-                Map<Integer, ItemStack> leftovers =
-                        buyer.getInventory().addItem(new ItemStack(material, trade.amount()));
+                final List<ItemStack> tradedItems = takeItems(seller, material, trade.amount());
+                if (tradedItems.stream().mapToInt(ItemStack::getAmount).sum() != trade.amount()) {
+                    restoreItems(seller, tradedItems);
+                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                    buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
+                    seller.sendMessage("§cTrade cancelled because the item transfer could not be completed.");
+                    first.unlock();
+                    second.unlock();
+                    return;
+                }
 
+                List<ItemStack> leftovers = giveItems(buyer, tradedItems);
                 if (!leftovers.isEmpty()) {
-                    // The inventory was checked immediately before the transfer. If Bukkit still reports
-                    // leftovers, put the items back with the seller before reversing the payment.
-                    seller.getInventory().addItem(new ItemStack(material, trade.amount()));
+                    restoreItems(seller, tradedItems);
                     reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
                     buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
                     seller.sendMessage("§cTrade cancelled because the item could not be delivered.");
@@ -710,13 +716,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                     if (!success(credit)) {
                         Bukkit.getScheduler().runTask(this, () -> {
-                            Map<Integer, ItemStack> returned =
-                                    seller.getInventory().addItem(new ItemStack(material, trade.amount()));
-                            if (!returned.isEmpty()) {
-                                for (ItemStack stack : returned.values()) {
-                                    seller.getWorld().dropItemNaturally(seller.getLocation(), stack);
-                                }
-                            }
+                            restoreItems(seller, tradedItems);
                             buyer.sendMessage("§cSeller payment failed. Your payment is being reversed.");
                             seller.sendMessage("§cTrade payment failed. The items were returned.");
                             reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
@@ -879,6 +879,45 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (stack != null && stack.getType() == material) total += stack.getAmount();
         }
         return total;
+    }
+
+    private List<ItemStack> takeItems(Player p, Material material, int amount) {
+        List<ItemStack> taken = new ArrayList<>();
+        ItemStack[] contents = p.getInventory().getStorageContents();
+        int left = amount;
+
+        for (int i = 0; i < contents.length && left > 0; i++) {
+            ItemStack stack = contents[i];
+            if (stack == null || stack.getType() != material) continue;
+
+            int take = Math.min(left, stack.getAmount());
+            ItemStack part = stack.clone();
+            part.setAmount(take);
+            taken.add(part);
+
+            if (take == stack.getAmount()) contents[i] = null;
+            else stack.setAmount(stack.getAmount() - take);
+            left -= take;
+        }
+
+        p.getInventory().setStorageContents(contents);
+        return taken;
+    }
+
+    private List<ItemStack> giveItems(Player p, List<ItemStack> items) {
+        List<ItemStack> leftovers = new ArrayList<>();
+        for (ItemStack item : items) {
+            Map<Integer, ItemStack> result = p.getInventory().addItem(item.clone());
+            leftovers.addAll(result.values());
+        }
+        return leftovers;
+    }
+
+    private void restoreItems(Player p, List<ItemStack> items) {
+        List<ItemStack> leftovers = giveItems(p, items);
+        for (ItemStack stack : leftovers) {
+            p.getWorld().dropItemNaturally(p.getLocation(), stack);
+        }
     }
 
     private void remove(Player p, Material material, int amount) {
