@@ -43,7 +43,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","history")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","history")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -300,6 +300,50 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 if (args.length < 2 || args.length > 3) {
                     p.sendMessage("§cUsage: /pay <player> <item> [amount]");
                     p.sendMessage("§7Example: /pay Steve diamond 5");
+                    return true;
+                }
+                int amount = parseAmount(p, args.length == 3 ? args[2] : "1");
+                if (amount < 1) return true;
+                createTrade(p, args[0], args[1], amount);
+                return true;
+            }
+
+            case "sellto" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /sellto.");
+                    return true;
+                }
+                if (args.length < 2 || args.length > 3) {
+                    p.sendMessage("§cUsage: /sellto <player> <item> [amount]");
+                    p.sendMessage("§7The other player will be asked to confirm the purchase.");
+                    return true;
+                }
+                int amount = parseAmount(p, args.length == 3 ? args[2] : "1");
+                if (amount < 1) return true;
+
+                Player buyer = Bukkit.getPlayerExact(args[0]);
+                if (buyer == null) {
+                    p.sendMessage("§cThat player must be online.");
+                    return true;
+                }
+                if (buyer.getUniqueId().equals(p.getUniqueId())) {
+                    p.sendMessage("§cYou cannot sell items to yourself.");
+                    return true;
+                }
+
+                createTrade(buyer, p.getName(), args[1], amount);
+                p.sendMessage("§aSale offer sent to §f" + buyer.getName() + "§a.");
+                return true;
+            }
+
+            case "buyfrom" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /buyfrom.");
+                    return true;
+                }
+                if (args.length < 2 || args.length > 3) {
+                    p.sendMessage("§cUsage: /buyfrom <player> <item> [amount]");
+                    p.sendMessage("§7The other player will be asked to confirm the sale.");
                     return true;
                 }
                 int amount = parseAmount(p, args.length == 3 ? args[2] : "1");
@@ -1169,6 +1213,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         if ((name.equals("prices") || name.equals("shop")) && args.length == 1) {
             return List.of("1", "2", "3", "4", "5");
+        }
+
+        if ((name.equals("sellto") || name.equals("buyfrom")) && args.length == 2) {
+            String query = args[1].toUpperCase(Locale.ROOT);
+            return prices.keySet().stream().map(Enum::name)
+                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
         }
 
         if (name.equals("pay") && args.length == 1) {
