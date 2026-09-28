@@ -1,6 +1,6 @@
 api-token: "PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE"
 guild-id: "1025178490481418280"
-prices-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/prices.txt"
+prices-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt"
 api:
   base-url: "https://unbelievaboat.com/api/v1"
   timeout-seconds: 15
