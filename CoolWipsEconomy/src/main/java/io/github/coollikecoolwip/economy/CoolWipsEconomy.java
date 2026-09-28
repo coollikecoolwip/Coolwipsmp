@@ -36,14 +36,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Deque<Transaction> history = new ArrayDeque<>();
     private int transactionCooldownMs;
     private int confirmationSeconds;
-    private double sellTax;
+    private double sellTax, buyTax;
 
     @Override public void onEnable() {
         saveDefaultConfig();
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","history")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -78,6 +78,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
         confirmationSeconds = Math.max(0, getConfig().getInt("settings.confirmation-seconds", 10));
         sellTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.sell-tax", 0.05)));
+        buyTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.buy-tax", 0.05)));
 
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
@@ -331,6 +332,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return true;
                 }
                 balance(p);
+                return true;
+            }
+
+            case "history" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /history.");
+                    return true;
+                }
+                showHistory(p);
                 return true;
             }
 
@@ -754,13 +764,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        long cost;
+        long baseCost;
         try {
-            cost = Math.multiplyExact(unit, requested);
+            baseCost = Math.multiplyExact(unit, requested);
         } catch (ArithmeticException e) {
             p.sendMessage("§cThat purchase is too large.");
             return;
         }
+
+        long cost = Math.max(0, Math.round(baseCost * (1.0 + buyTax)));
 
         if (cost > maxMoney) {
             p.sendMessage("§cThat purchase exceeds the $" + maxMoney + " transaction limit.");
@@ -818,6 +830,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
 
+                record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
+                        amount, money, true, new java.util.Date().toString()));
                 p.sendMessage("§aBought §f" + amount + "x " + pretty(finalMaterial)
                         + " §afor §c$" + money + "§a.");
                 lock.unlock();
@@ -832,10 +846,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     "{\"cash\":" + money + ",\"reason\":\"" + json(reversalReason) + "\"}");
 
             if (!success(reverse)) {
-                getLogger().severe("Could not reverse $" + money + " for " + p.getName()
+                getLogger().severe("Could not reverse $" + money + " for "
+                        + (p == null ? "an economy transaction" : p.getName())
                         + ". UnbelievaBoat HTTP " + reverse.status);
             }
-            lock.unlock();
+            if (lock != null) {
+                lock.unlock();
+            }
         });
     }
 
@@ -951,6 +968,29 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         p.sendMessage("§cBalance lookup failed (HTTP " + result.status + ")."));
             }
         });
+    }
+
+    private void showHistory(Player p) {
+        List<Transaction> mine;
+        synchronized (history) {
+            mine = history.stream()
+                    .filter(t -> t.uuid().equals(p.getUniqueId()))
+                    .limit(10)
+                    .toList();
+        }
+
+        p.sendMessage("§6§lCoolWips Economy History");
+        if (mine.isEmpty()) {
+            p.sendMessage("§7No transactions recorded since the plugin was started.");
+            return;
+        }
+
+        for (Transaction t : mine) {
+            String action = t.purchase() ? "Bought" : "Sold";
+            String sign = t.purchase() ? "§c-$" : "§a+$";
+            p.sendMessage("§7" + action + " §f" + t.amount() + "x " + pretty(Material.matchMaterial(t.material()))
+                    + " §7for " + sign + money(t.money()));
+        }
     }
 
     private void status(CommandSender sender) {
