@@ -23,7 +23,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
-    private String token, guildId, baseUrl, reason, pricesUrl, shopUrl, buyReason;
+    private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl;
     private int maxItems, pricesPerPage;
     private long maxMoney;
     private boolean sellsDisabled;
@@ -33,27 +33,38 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         saveDefaultConfig();
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
+
         for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop")) {
             PluginCommand c = getCommand(name);
-            if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
+            if (c != null) {
+                c.setExecutor(this);
+                c.setTabCompleter(this);
+            }
         }
-        getLogger().info("CoolWips Economy enabled. " + prices.size() + " fallback prices loaded. Sale maintenance: " + (sellsDisabled ? "ALL BLOCKED" : "enabled") + ".");
+
+        getLogger().info("CoolWips Economy enabled. Sell prices: " + prices.size() +
+                ", shop prices: " + shopPrices.size() + ".");
         if (tokenMissing()) getLogger().warning("Set your UnbelievaBoat API token in config.yml.");
+
         loadRemotePrices();
+        loadRemoteShop();
     }
 
     private void loadSettings() {
         reloadConfig();
+
         token = getConfig().getString("api-token", "").trim();
         guildId = getConfig().getString("guild-id", "").trim();
-        pricesUrl = getConfig().getString("prices-url",
-                "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/prices.txt").trim();
         baseUrl = getConfig().getString("api.base-url", "https://unbelievaboat.com/api/v1").replaceAll("/+$", "");
         reason = getConfig().getString("api.reason", "CoolWips SMP Minecraft sale");
         buyReason = getConfig().getString("api.buy-reason", "CoolWips SMP Minecraft shop purchase");
+        pricesUrl = getConfig().getString("prices-url", "").trim();
+        shopUrl = getConfig().getString("shop-url", "").trim();
+
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
+
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
         for (String name : getConfig().getStringList("maintenance.blocked-items")) {
@@ -61,31 +72,39 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (m != null) maintenanceBlocks.add(m);
         }
 
-        Map<Material, Long> fallback = new HashMap<>();
-        var section = getConfig().getConfigurationSection("prices");
-        if (section != null) for (String key : section.getKeys(false)) {
-            Material m = Material.matchMaterial(key);
-            long p = getConfig().getLong("prices." + key);
-            if (m != null && p >= 0) fallback.put(m, p);
-        }
         prices.clear();
-        prices.putAll(fallback);
+        prices.putAll(readConfigPrices("prices"));
+
         shopPrices.clear();
-        var shop = getConfig().getConfigurationSection("shop");
-        if (shop != null) for (String key : shop.getKeys(false)) {
-            Material m = Material.matchMaterial(key);
-            long p = getConfig().getLong("shop." + key);
-            if (m != null && p > 0) shopPrices.put(m, p);
-        }
+        shopPrices.putAll(readConfigPrices("shop"));
     }
 
-    private int timeout() { return Math.max(5, getConfig().getInt("api.timeout-seconds", 15)); }
+    private Map<Material, Long> readConfigPrices(String sectionName) {
+        Map<Material, Long> result = new HashMap<>();
+        var section = getConfig().getConfigurationSection(sectionName);
+        if (section == null) return result;
+
+        for (String key : section.getKeys(false)) {
+            Material m = Material.matchMaterial(key);
+            long value = getConfig().getLong(sectionName + "." + key);
+            if (m != null && value > 0) result.put(m, value);
+        }
+        return result;
+    }
+
+    private int timeout() {
+        return Math.max(5, getConfig().getInt("api.timeout-seconds", 15));
+    }
 
     private boolean tokenMissing() {
-        return token.isBlank() || token.equalsIgnoreCase("PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE") || guildId.isBlank();
+        return token.isBlank()
+                || token.equalsIgnoreCase("PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE")
+                || guildId.isBlank();
     }
 
-    private String userUrl(String discordId) { return baseUrl + "/guilds/" + guildId + "/users/" + discordId; }
+    private String userUrl(String discordId) {
+        return baseUrl + "/guilds/" + guildId + "/users/" + discordId;
+    }
 
     private HttpResult api(String method, String url, String body) {
         try {
@@ -94,58 +113,70 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     .header("Authorization", token)
                     .header("Accept", "application/json")
                     .header("Content-Type", "application/json");
-            if ("PATCH".equals(method)) b.method("PATCH", HttpRequest.BodyPublishers.ofString(body));
-            else b.GET();
-            HttpResponse<String> r = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
-            return new HttpResult(r.statusCode(), r.body());
+
+            if ("PATCH".equals(method)) {
+                b.method("PATCH", HttpRequest.BodyPublishers.ofString(body));
+            } else {
+                b.GET();
+            }
+
+            HttpResponse<String> response = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            return new HttpResult(response.statusCode(), response.body());
         } catch (Exception e) {
             return new HttpResult(0, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
     }
 
     private void loadRemotePrices() {
-        if (pricesUrl.isBlank()) {
-            getLogger().warning("No prices-url configured; using local fallback prices.");
-            return;
-        }
+        loadRemoteFile(pricesUrl, "prices.txt", prices);
+    }
+
+    private void loadRemoteShop() {
+        loadRemoteFile(shopUrl, "shop.txt", shopPrices);
+    }
+
+    private void loadRemoteFile(String fileUrl, String label, Map<Material, Long> destination) {
+        if (fileUrl.isBlank()) return;
+
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             try {
-                String url = pricesUrl + (pricesUrl.contains("?") ? "&" : "?")
+                String url = fileUrl + (fileUrl.contains("?") ? "&" : "?")
                         + "cacheBust=" + System.currentTimeMillis();
+
                 HttpRequest request = HttpRequest.newBuilder(URI.create(url))
                         .timeout(Duration.ofSeconds(timeout()))
                         .header("Accept", "text/plain")
                         .header("Cache-Control", "no-cache")
-                        .GET().build();
+                        .GET()
+                        .build();
+
                 HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    getLogger().warning("Could not load remote prices.txt (HTTP " + response.statusCode()
-                            + "). Using local fallback prices.");
+                    getLogger().warning("Could not load remote " + label + " (HTTP "
+                            + response.statusCode() + "). Keeping local values.");
                     return;
                 }
 
-                Map<Material, Long> loaded = parsePrices(response.body());
+                Map<Material, Long> loaded = parsePrices(response.body(), label);
                 if (loaded.isEmpty()) {
-                    getLogger().warning("Remote prices.txt contained no valid prices. Using local fallback prices.");
+                    getLogger().warning("Remote " + label + " contained no valid prices. Keeping local values.");
                     return;
                 }
 
-                // Only materials explicitly listed in prices.txt are sellable.
-                // There is deliberately NO automatic $1 fallback for missing blocks.
-                prices.clear();
-                prices.putAll(loaded);
-                getLogger().info("Loaded " + loaded.size() + " prices from GitHub.");
+                destination.clear();
+                destination.putAll(loaded);
+                getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
             } catch (Exception e) {
-                getLogger().warning("Could not load remote prices.txt: "
-                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
-                        + ". Using local fallback prices.");
+                getLogger().warning("Could not load remote " + label + ": "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
             }
         });
     }
 
-    private Map<Material, Long> parsePrices(String text) {
+    private Map<Material, Long> parsePrices(String text, String label) {
         Map<Material, Long> loaded = new HashMap<>();
+
         for (String rawLine : text.split("\\R")) {
             String line = rawLine.trim();
             if (line.isEmpty() || line.startsWith("#")) continue;
@@ -155,248 +186,589 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (separator <= 0) continue;
 
             String materialName = line.substring(0, separator).trim()
-                    .toUpperCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
-            String valueText = line.substring(separator + 1).trim();
+                    .toUpperCase(Locale.ROOT)
+                    .replace('-', '_')
+                    .replace(' ', '_');
 
             try {
-                long value = Long.parseLong(valueText);
+                long value = Long.parseLong(line.substring(separator + 1).trim());
                 Material material = Material.matchMaterial(materialName);
+
                 if (material == null) {
-                    getLogger().warning("Ignoring unknown material in prices.txt: " + materialName);
+                    getLogger().warning("Ignoring unknown material in " + label + ": " + materialName);
                     continue;
                 }
-                if (value < 0) {
-                    getLogger().warning("Ignoring negative price for " + materialName);
+                if (value <= 0) {
+                    getLogger().warning("Ignoring non-positive price in " + label + ": " + materialName);
                     continue;
                 }
+
                 loaded.put(material, value);
-            } catch (NumberFormatException ignored) {
-                getLogger().warning("Ignoring invalid price line: " + rawLine);
+            } catch (NumberFormatException e) {
+                getLogger().warning("Ignoring invalid price line in " + label + ": " + rawLine);
             }
         }
+
         return loaded;
     }
 
-    private String json(String s) { return s.replace("\\", "\\\\").replace("\"", "\\\""); }
+    private String json(String value) {
+        return value.replace("\\", "\\\\").replace(""", "\\"");
+    }
 
     @Override public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
         switch (command.getName().toLowerCase(Locale.ROOT)) {
             case "sell" -> {
-                if (!(sender instanceof Player p)) { sender.sendMessage("Only players can use /sell."); return true; }
-                if (args.length < 1 || args.length > 2) { p.sendMessage("§cUsage: /sell <item> [amount]"); return true; }
-                int amount = 1;
-                if (args.length == 2) try { amount = Integer.parseInt(args[1]); } catch (NumberFormatException e) {
-                    p.sendMessage("§cAmount must be a whole number."); return true;
-                }
-                sell(p, args[0], amount); return true;
-            }
-            case "sellall" -> {
-                if (!(sender instanceof Player p)) { sender.sendMessage("Only players can use /sellall."); return true; }
-                if (args.length != 1) { p.sendMessage("§cUsage: /sellall <item>"); return true; }
-                sell(p, args[0], -1); return true;
-            }
-            case "prices" -> {
-                int page = 1;
-                if (args.length > 1) { sender.sendMessage("§cUsage: /prices [page]"); return true; }
-                if (args.length == 1) try { page = Math.max(1, Integer.parseInt(args[0])); } catch (NumberFormatException e) {
-                    sender.sendMessage("§cPage must be a number."); return true;
-                }
-                showPrices(sender, page); return true;
-            }
-            case "balance" -> {
-                if (!(sender instanceof Player p)) { sender.sendMessage("Only players can use /balance."); return true; }
-                balance(p); return true;
-            }
-            case "cweconomy" -> {
-                if (args.length < 1 || (!args[0].equalsIgnoreCase("reload") && !args[0].equalsIgnoreCase("status") && !args[0].equalsIgnoreCase("maintenance"))) {
-                    sender.sendMessage("§e/cweconomy reload §7- reload prices/config");
-                    sender.sendMessage("§e/cweconomy status §7- test API");
-                    sender.sendMessage("§e/cweconomy maintenance §7- manage sale maintenance");
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /sell.");
                     return true;
                 }
-                if (args[0].equalsIgnoreCase("maintenance")) { maintenance(sender, args); return true; }
+                if (args.length < 1 || args.length > 2) {
+                    p.sendMessage("§cUsage: /sell <item> [amount]");
+                    return true;
+                }
+                int amount = parseAmount(p, args.length == 2 ? args[1] : "1");
+                if (amount < 1) return true;
+                sell(p, args[0], amount);
+                return true;
+            }
+
+            case "sellall" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /sellall.");
+                    return true;
+                }
+                if (args.length != 1) {
+                    p.sendMessage("§cUsage: /sellall <item>");
+                    return true;
+                }
+                sell(p, args[0], -1);
+                return true;
+            }
+
+            case "buy" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /buy.");
+                    return true;
+                }
+                if (args.length < 1 || args.length > 2) {
+                    p.sendMessage("§cUsage: /buy <item> [amount]");
+                    return true;
+                }
+                int amount = parseAmount(p, args.length == 2 ? args[1] : "1");
+                if (amount < 1) return true;
+                buy(p, args[0], amount);
+                return true;
+            }
+
+            case "shop" -> {
+                int page = parsePage(sender, args);
+                if (page < 1) return true;
+                showPaged(sender, shopPrices, page, "CoolWips Shop", "/shop");
+                return true;
+            }
+
+            case "prices" -> {
+                int page = parsePage(sender, args);
+                if (page < 1) return true;
+                showPaged(sender, prices, page, "CoolWips Sell Prices", "/prices");
+                return true;
+            }
+
+            case "balance" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /balance.");
+                    return true;
+                }
+                balance(p);
+                return true;
+            }
+
+            case "cweconomy" -> {
+                if (args.length < 1) {
+                    economyHelp(sender);
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("maintenance")) {
+                    maintenance(sender, args);
+                    return true;
+                }
+
                 if (args[0].equalsIgnoreCase("reload")) {
                     loadSettings();
                     loadRemotePrices();
-                    sender.sendMessage("§aCoolWips Economy reload started. Loading prices from GitHub...");
-                } else status(sender);
+                    loadRemoteShop();
+                    sender.sendMessage("§aCoolWips Economy reload started.");
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("status")) {
+                    status(sender);
+                    return true;
+                }
+
+                economyHelp(sender);
                 return true;
             }
-            default -> { return false; }
+
+            default -> {
+                return false;
+            }
         }
     }
 
-    private void maintenance(CommandSender s, String[] args) {
-        if (!s.isOp()) { s.sendMessage("§cOnly server operators can use sale maintenance."); return; }
-        if (args.length == 1 || args[1].equalsIgnoreCase("status")) {
-            s.sendMessage("§6Sale maintenance: " + (sellsDisabled ? "§cALL SELLS BLOCKED" : "§aALL SELLS ENABLED"));
-            s.sendMessage("§7Blocked items: §f" + (maintenanceBlocks.isEmpty() ? "none" : maintenanceBlocks.stream().map(this::pretty).sorted().reduce((a,b) -> a + ", " + b).orElse("none")));
-            return;
+    private int parseAmount(Player p, String text) {
+        try {
+            int amount = Integer.parseInt(text);
+            if (amount < 1) {
+                p.sendMessage("§cAmount must be at least 1.");
+                return -1;
+            }
+            return amount;
+        } catch (NumberFormatException e) {
+            p.sendMessage("§cAmount must be a whole number.");
+            return -1;
         }
-        String action = args[1].toLowerCase(Locale.ROOT);
-        if (action.equals("on") || action.equals("off")) {
-            sellsDisabled = action.equals("on");
-            getConfig().set("maintenance.all-sells-disabled", sellsDisabled);
-            saveConfig();
-            s.sendMessage(sellsDisabled ? "§cAll selling is now BLOCKED." : "§aAll selling is now ENABLED.");
-            return;
+    }
+
+    private int parsePage(CommandSender sender, String[] args) {
+        if (args.length > 1) {
+            sender.sendMessage("§cUsage: /shop [page]");
+            return -1;
         }
-        if ((action.equals("block") || action.equals("unblock")) && args.length >= 3) {
-            Material m = Material.matchMaterial(String.join("_", Arrays.copyOfRange(args, 2, args.length)).replace("-", "_").toUpperCase(Locale.ROOT));
-            if (m == null) { s.sendMessage("§cUnknown item."); return; }
-            if (action.equals("block")) { maintenanceBlocks.add(m); s.sendMessage("§cSelling " + pretty(m) + " is now BLOCKED."); }
-            else { maintenanceBlocks.remove(m); s.sendMessage("§aSelling " + pretty(m) + " is now ENABLED."); }
-            getConfig().set("maintenance.blocked-items", maintenanceBlocks.stream().map(Enum::name).sorted().toList());
-            saveConfig();
-            return;
+        if (args.length == 0) return 1;
+
+        try {
+            int page = Integer.parseInt(args[0]);
+            if (page < 1) {
+                sender.sendMessage("§cPage must be at least 1.");
+                return -1;
+            }
+            return page;
+        } catch (NumberFormatException e) {
+            sender.sendMessage("§cPage must be a number.");
+            return -1;
         }
-        s.sendMessage("§e/cweconomy maintenance on §7- block all sells");
-        s.sendMessage("§e/cweconomy maintenance off §7- allow all sells");
-        s.sendMessage("§e/cweconomy maintenance block <item> §7- block one item");
-        s.sendMessage("§e/cweconomy maintenance unblock <item> §7- allow one item");
-        s.sendMessage("§e/cweconomy maintenance status §7- show maintenance status");
+    }
+
+    private void economyHelp(CommandSender sender) {
+        sender.sendMessage("§e/cweconomy reload §7- reload prices/shop/config");
+        sender.sendMessage("§e/cweconomy status §7- test API");
+        sender.sendMessage("§e/cweconomy maintenance §7- manage sale maintenance");
     }
 
     private void sell(Player p, String raw, int requested) {
-        Material m = Material.matchMaterial(raw.replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT));
-        if (sellsDisabled) { p.sendMessage("§cSelling is currently disabled for maintenance."); return; }
-        if (m != null && maintenanceBlocks.contains(m)) { p.sendMessage("§cSelling " + pretty(m) + " is currently disabled for maintenance."); return; }
-        Long unit = m == null ? null : prices.get(m);
-        if (unit == null) { p.sendMessage("§cThat item cannot be sold. Use /prices."); return; }
-        if (unit <= 0) { p.sendMessage("§cThat item has no sell value."); return; }
-        int amount = requested == -1 ? count(p, m) : requested;
-        if (amount < 1) { p.sendMessage("§cYou don't have any " + pretty(m) + "."); return; }
-        if (amount > maxItems) { p.sendMessage("§cYou can sell at most " + maxItems + " items at once."); return; }
-        long payout;
-        try { payout = Math.multiplyExact(unit, amount); } catch (ArithmeticException e) { p.sendMessage("§cThat sale is too large."); return; }
-        if (payout > maxMoney) { p.sendMessage("§cThat sale exceeds the $" + maxMoney + " payout limit."); return; }
+        Material material = matchMaterial(raw);
 
-        ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
-        if (!lock.tryLock()) { p.sendMessage("§eYou already have a sale processing. Please wait."); return; }
-
-        String discordId;
-        try { discordId = DiscordSRV.getPlugin().getAccountLinkManager().getDiscordId(p.getUniqueId()); }
-        catch (Exception e) { lock.unlock(); p.sendMessage("§cCould not read your DiscordSRV link."); return; }
-        if (discordId == null || discordId.isBlank()) {
-            lock.unlock();
-            p.sendMessage("§cLink your Minecraft account with DiscordSRV first.");
+        if (sellsDisabled) {
+            p.sendMessage("§cSelling is currently disabled for maintenance.");
+            return;
+        }
+        if (material != null && maintenanceBlocks.contains(material)) {
+            p.sendMessage("§cSelling " + pretty(material) + " is currently disabled for maintenance.");
             return;
         }
 
-        p.sendMessage("§7Selling §f" + amount + "x " + pretty(m) + " §7for §a$" + payout + "§7...");
-        final int a = amount; final long money = payout; final Material material = m;
+        Long unit = material == null ? null : prices.get(material);
+        if (unit == null) {
+            p.sendMessage("§cThat item cannot be sold. Use /prices.");
+            return;
+        }
+
+        int amount = requested == -1 ? count(p, material) : requested;
+        if (amount < 1) {
+            p.sendMessage("§cYou don't have any " + pretty(material) + ".");
+            return;
+        }
+        if (amount > maxItems) {
+            p.sendMessage("§cYou can sell at most " + maxItems + " items at once.");
+            return;
+        }
+
+        long payout;
+        try {
+            payout = Math.multiplyExact(unit, amount);
+        } catch (ArithmeticException e) {
+            p.sendMessage("§cThat sale is too large.");
+            return;
+        }
+
+        if (payout > maxMoney) {
+            p.sendMessage("§cThat sale exceeds the $" + maxMoney + " payout limit.");
+            return;
+        }
+
+        ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            p.sendMessage("§eYou already have a transaction processing. Please wait.");
+            return;
+        }
+
+        String discordId = linkedId(p);
+        if (discordId == null) {
+            lock.unlock();
+            return;
+        }
+
+        p.sendMessage("§7Selling §f" + amount + "x " + pretty(material) + " §7for §a$" + payout + "§7...");
+
+        final int finalAmount = amount;
+        final long money = payout;
+        final Material finalMaterial = material;
+
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult r = api("PATCH", userUrl(discordId),
+            HttpResult result = api("PATCH", userUrl(discordId),
                     "{\"cash\":" + money + ",\"reason\":\"" + json(reason) + "\"}");
-            if (r.status < 200 || r.status >= 300) {
+
+            if (!success(result)) {
                 lock.unlock();
-                Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§cSale cancelled. UnbelievaBoat HTTP " + r.status + "."));
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cSale cancelled. UnbelievaBoat HTTP " + result.status + "."));
                 return;
             }
+
             Bukkit.getScheduler().runTask(this, () -> {
-                if (!p.isOnline() || count(p, material) < a) {
+                if (!p.isOnline() || count(p, finalMaterial) < finalAmount) {
+                    reverseMoney(discordId, money, "Sale reversal", lock, p);
                     p.sendMessage("§cItems were no longer available. Reversing payment...");
-                    Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                        HttpResult reverse = api("PATCH", userUrl(discordId),
-                                "{\"cash\":" + (-money) + ",\"reason\":\"Sale reversal\"}");
-                        if (reverse.status < 200 || reverse.status >= 300)
-                            getLogger().severe("Could not reverse a failed item removal for " + p.getName() + ".");
-                        lock.unlock();
-                    });
                     return;
                 }
-                remove(p, material, a);
-                p.sendMessage("§aSold §f" + a + "x " + pretty(material) + " §afor §a$" + money + "§a.");
+
+                remove(p, finalMaterial, finalAmount);
+                p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
+                        + " §afor §a$" + money + "§a.");
                 lock.unlock();
             });
         });
     }
 
-    private int count(Player p, Material m) {
+    private void buy(Player p, String raw, int requested) {
+        Material material = matchMaterial(raw);
+        Long unit = material == null ? null : shopPrices.get(material);
+
+        if (unit == null) {
+            p.sendMessage("§cThat item is not sold by the shop. Use /shop.");
+            return;
+        }
+        if (requested > maxItems) {
+            p.sendMessage("§cYou can buy at most " + maxItems + " items at once.");
+            return;
+        }
+
+        long cost;
+        try {
+            cost = Math.multiplyExact(unit, requested);
+        } catch (ArithmeticException e) {
+            p.sendMessage("§cThat purchase is too large.");
+            return;
+        }
+
+        if (cost > maxMoney) {
+            p.sendMessage("§cThat purchase exceeds the $" + maxMoney + " transaction limit.");
+            return;
+        }
+        if (!canFit(p, material, requested)) {
+            p.sendMessage("§cYou don't have enough inventory space for that purchase.");
+            return;
+        }
+
+        ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            p.sendMessage("§eYou already have a transaction processing. Please wait.");
+            return;
+        }
+
+        String discordId = linkedId(p);
+        if (discordId == null) {
+            lock.unlock();
+            return;
+        }
+
+        p.sendMessage("§7Buying §f" + requested + "x " + pretty(material)
+                + " §7for §c$" + cost + "§7...");
+
+        final int amount = requested;
+        final long money = cost;
+        final Material finalMaterial = material;
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            // UnbelievaBoat treats negative cash as a withdrawal from the user's cash balance.
+            HttpResult debit = api("PATCH", userUrl(discordId),
+                    "{\"cash\":" + (-money) + ",\"reason\":\"" + json(buyReason) + "\"}");
+
+            if (!success(debit)) {
+                lock.unlock();
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cPurchase cancelled. UnbelievaBoat HTTP " + debit.status + "."));
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!p.isOnline() || !canFit(p, finalMaterial, amount)) {
+                    p.sendMessage("§cThe item could not be added. Reversing your payment...");
+                    reverseMoney(discordId, money, "Shop purchase reversal", lock, p);
+                    return;
+                }
+
+                Map<Integer, ItemStack> leftovers =
+                        p.getInventory().addItem(new ItemStack(finalMaterial, amount));
+
+                if (!leftovers.isEmpty()) {
+                    p.sendMessage("§cThe item could not be added. Reversing your payment...");
+                    reverseMoney(discordId, money, "Shop purchase reversal", lock, p);
+                    return;
+                }
+
+                p.sendMessage("§aBought §f" + amount + "x " + pretty(finalMaterial)
+                        + " §afor §c$" + money + "§a.");
+                lock.unlock();
+            });
+        });
+    }
+
+    private void reverseMoney(String discordId, long money, String reversalReason,
+                              ReentrantLock lock, Player p) {
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            HttpResult reverse = api("PATCH", userUrl(discordId),
+                    "{\"cash\":" + money + ",\"reason\":\"" + json(reversalReason) + "\"}");
+
+            if (!success(reverse)) {
+                getLogger().severe("Could not reverse $" + money + " for " + p.getName()
+                        + ". UnbelievaBoat HTTP " + reverse.status);
+            }
+            lock.unlock();
+        });
+    }
+
+    private boolean canFit(Player p, Material material, int amount) {
+        int remaining = amount;
+        int maxStack = new ItemStack(material).getMaxStackSize();
+
+        for (ItemStack stack : p.getInventory().getStorageContents()) {
+            if (stack == null || stack.getType().isAir()) {
+                remaining -= maxStack;
+            } else if (stack.getType() == material) {
+                remaining -= Math.max(0, maxStack - stack.getAmount());
+            }
+
+            if (remaining <= 0) return true;
+        }
+
+        return false;
+    }
+
+    private int count(Player p, Material material) {
         int total = 0;
-        for (ItemStack s : p.getInventory().getStorageContents())
-            if (s != null && s.getType() == m) total += s.getAmount();
+        for (ItemStack stack : p.getInventory().getStorageContents()) {
+            if (stack != null && stack.getType() == material) total += stack.getAmount();
+        }
         return total;
     }
 
-    private void remove(Player p, Material m, int amount) {
-        ItemStack[] c = p.getInventory().getStorageContents();
+    private void remove(Player p, Material material, int amount) {
+        ItemStack[] contents = p.getInventory().getStorageContents();
         int left = amount;
-        for (int i = 0; i < c.length && left > 0; i++) {
-            ItemStack s = c[i];
-            if (s == null || s.getType() != m) continue;
-            int take = Math.min(left, s.getAmount());
-            if (take == s.getAmount()) c[i] = null; else s.setAmount(s.getAmount() - take);
+
+        for (int i = 0; i < contents.length && left > 0; i++) {
+            ItemStack stack = contents[i];
+            if (stack == null || stack.getType() != material) continue;
+
+            int take = Math.min(left, stack.getAmount());
+            if (take == stack.getAmount()) contents[i] = null;
+            else stack.setAmount(stack.getAmount() - take);
             left -= take;
         }
-        p.getInventory().setStorageContents(c);
+
+        p.getInventory().setStorageContents(contents);
     }
 
-    private void balance(Player p) {
-        String id = linkedId(p);
-        if (id == null) return;
-        p.sendMessage("§7Checking UnbelievaBoat balance...");
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult r = api("GET", userUrl(id), null);
-            Matcher match = CASH.matcher(r.body);
-            if (r.status >= 200 && r.status < 300 && match.find())
-                Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§aUnbelievaBoat cash: §f$" + match.group(1)));
-            else Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§cBalance lookup failed (HTTP " + r.status + ")."));
-        });
+    private boolean success(HttpResult result) {
+        return result.status >= 200 && result.status < 300;
     }
 
     private String linkedId(Player p) {
         try {
             String id = DiscordSRV.getPlugin().getAccountLinkManager().getDiscordId(p.getUniqueId());
-            if (id == null || id.isBlank()) { p.sendMessage("§cLink your Minecraft account with DiscordSRV first."); return null; }
+            if (id == null || id.isBlank()) {
+                p.sendMessage("§cLink your Minecraft account with DiscordSRV first.");
+                return null;
+            }
             return id;
-        } catch (Exception e) { p.sendMessage("§cCould not read your DiscordSRV link."); return null; }
+        } catch (Exception e) {
+            p.sendMessage("§cCould not read your DiscordSRV link.");
+            return null;
+        }
     }
 
-    private void status(CommandSender s) {
-        s.sendMessage("§6CoolWips Economy");
-        s.sendMessage("§7API token: " + (tokenMissing() ? "§cNOT SET" : "§aSET"));
-        s.sendMessage("§7Guild ID: §f" + (guildId.isBlank() ? "missing" : guildId));
-        s.sendMessage("§7DiscordSRV: " + (Bukkit.getPluginManager().isPluginEnabled("DiscordSRV") ? "§aenabled" : "§cdisabled"));
-        s.sendMessage("§7GitHub prices: §f" + (pricesUrl.isBlank() ? "disabled" : pricesUrl));
-        s.sendMessage("§7Loaded prices: §f" + prices.size());
-        if (tokenMissing()) return;
-        s.sendMessage("§7Testing UnbelievaBoat...");
+    private void balance(Player p) {
+        String id = linkedId(p);
+        if (id == null) return;
+
+        p.sendMessage("§7Checking UnbelievaBoat balance...");
+
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult r = api("GET", baseUrl + "/guilds/" + guildId, null);
-            Bukkit.getScheduler().runTask(this, () -> s.sendMessage(r.status >= 200 && r.status < 300
-                    ? "§aUnbelievaBoat API: connected" : "§cUnbelievaBoat API: HTTP " + r.status));
+            HttpResult result = api("GET", userUrl(id), null);
+            Matcher match = CASH.matcher(result.body);
+
+            if (success(result) && match.find()) {
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§aUnbelievaBoat cash: §f$" + match.group(1)));
+            } else {
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cBalance lookup failed (HTTP " + result.status + ")."));
+            }
         });
     }
 
-    private void showPrices(CommandSender s, int page) {
-        List<Map.Entry<Material, Long>> list = prices.entrySet().stream()
-                .sorted(Comparator.comparing(e -> e.getKey().name())).toList();
-        int pages = Math.max(1, (int)Math.ceil(list.size() / (double)pricesPerPage));
-        if (page > pages) { s.sendMessage("§cThat page doesn't exist. Pages: " + pages); return; }
-        s.sendMessage("§6§lCoolWips Economy Prices §7(Page " + page + "/" + pages + ")");
-        int start = (page - 1) * pricesPerPage;
-        for (int i = start; i < Math.min(start + pricesPerPage, list.size()); i++)
-            s.sendMessage("§f" + pretty(list.get(i).getKey()) + " §7- §a$" + list.get(i).getValue() + " §7each");
-        if (page < pages) s.sendMessage("§7Next: §f/prices " + (page + 1));
+    private void status(CommandSender sender) {
+        sender.sendMessage("§6CoolWips Economy");
+        sender.sendMessage("§7API token: " + (tokenMissing() ? "§cNOT SET" : "§aSET"));
+        sender.sendMessage("§7Guild ID: §f" + (guildId.isBlank() ? "missing" : guildId));
+        sender.sendMessage("§7DiscordSRV: " +
+                (Bukkit.getPluginManager().isPluginEnabled("DiscordSRV") ? "§aenabled" : "§cdisabled"));
+        sender.sendMessage("§7Sell prices: §f" + prices.size());
+        sender.sendMessage("§7Shop prices: §f" + shopPrices.size());
+        sender.sendMessage("§7Sell maintenance: " + (sellsDisabled ? "§cBLOCKED" : "§aENABLED"));
+        sender.sendMessage("§7Prices URL: §f" + pricesUrl);
+        sender.sendMessage("§7Shop URL: §f" + shopUrl);
+
+        if (tokenMissing()) return;
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            HttpResult result = api("GET", baseUrl + "/guilds/" + guildId, null);
+            Bukkit.getScheduler().runTask(this, () ->
+                    sender.sendMessage(success(result)
+                            ? "§aUnbelievaBoat API: connected"
+                            : "§cUnbelievaBoat API: HTTP " + result.status));
+        });
     }
 
-    private String pretty(Material m) {
+    private void showPaged(CommandSender sender, Map<Material, Long> map,
+                           int page, String title, String command) {
+        List<Map.Entry<Material, Long>> list = map.entrySet().stream()
+                .sorted(Comparator.comparing(e -> e.getKey().name()))
+                .toList();
+
+        int pages = Math.max(1, (int) Math.ceil(list.size() / (double) pricesPerPage));
+        if (page > pages) {
+            sender.sendMessage("§cThat page doesn't exist. Pages: " + pages);
+            return;
+        }
+
+        sender.sendMessage("§6§l" + title + " §7(Page " + page + "/" + pages + ")");
+
+        int start = (page - 1) * pricesPerPage;
+        for (int i = start; i < Math.min(start + pricesPerPage, list.size()); i++) {
+            sender.sendMessage("§f" + pretty(list.get(i).getKey())
+                    + " §7- §a$" + list.get(i).getValue() + " §7each");
+        }
+
+        if (page < pages) sender.sendMessage("§7Next: §f" + command + " " + (page + 1));
+    }
+
+    private void maintenance(CommandSender sender, String[] args) {
+        if (!sender.isOp()) {
+            sender.sendMessage("§cOnly server operators can use sale maintenance.");
+            return;
+        }
+
+        if (args.length == 1 || args[1].equalsIgnoreCase("status")) {
+            sender.sendMessage("§6Sale maintenance: "
+                    + (sellsDisabled ? "§cALL SELLS BLOCKED" : "§aALL SELLS ENABLED"));
+            sender.sendMessage("§7Blocked items: §f" + (maintenanceBlocks.isEmpty()
+                    ? "none"
+                    : maintenanceBlocks.stream().map(this::pretty).sorted()
+                    .reduce((a, b) -> a + ", " + b).orElse("none")));
+            return;
+        }
+
+        String action = args[1].toLowerCase(Locale.ROOT);
+
+        if (action.equals("on") || action.equals("off")) {
+            sellsDisabled = action.equals("on");
+            getConfig().set("maintenance.all-sells-disabled", sellsDisabled);
+            saveConfig();
+            sender.sendMessage(sellsDisabled
+                    ? "§cAll selling is now BLOCKED."
+                    : "§aAll selling is now ENABLED.");
+            return;
+        }
+
+        if ((action.equals("block") || action.equals("unblock")) && args.length >= 3) {
+            Material material = matchMaterial(String.join("_",
+                    Arrays.copyOfRange(args, 2, args.length)));
+
+            if (material == null) {
+                sender.sendMessage("§cUnknown item.");
+                return;
+            }
+
+            if (action.equals("block")) {
+                maintenanceBlocks.add(material);
+                sender.sendMessage("§cSelling " + pretty(material) + " is now BLOCKED.");
+            } else {
+                maintenanceBlocks.remove(material);
+                sender.sendMessage("§aSelling " + pretty(material) + " is now ENABLED.");
+            }
+
+            getConfig().set("maintenance.blocked-items",
+                    maintenanceBlocks.stream().map(Enum::name).sorted().toList());
+            saveConfig();
+            return;
+        }
+
+        sender.sendMessage("§e/cweconomy maintenance on §7- block all sells");
+        sender.sendMessage("§e/cweconomy maintenance off §7- allow all sells");
+        sender.sendMessage("§e/cweconomy maintenance block <item>");
+        sender.sendMessage("§e/cweconomy maintenance unblock <item>");
+        sender.sendMessage("§e/cweconomy maintenance status");
+    }
+
+    private Material matchMaterial(String raw) {
+        return Material.matchMaterial(raw.replace('-', '_')
+                .replace(' ', '_')
+                .toUpperCase(Locale.ROOT));
+    }
+
+    private String pretty(Material material) {
         StringBuilder out = new StringBuilder();
-        for (String part : m.name().toLowerCase(Locale.ROOT).split("_"))
-            out.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1)).append(' ');
+        for (String part : material.name().toLowerCase(Locale.ROOT).split("_")) {
+            out.append(Character.toUpperCase(part.charAt(0)))
+                    .append(part.substring(1)).append(' ');
+        }
         return out.toString().trim();
     }
 
-    @Override public List<String> onTabComplete(CommandSender s, Command c, String a, String[] args) {
-        String n = c.getName().toLowerCase(Locale.ROOT);
-        if ((n.equals("sell") || n.equals("sellall")) && args.length == 1) {
-            String q = args[0].toUpperCase(Locale.ROOT);
-            return prices.keySet().stream().map(Enum::name).filter(x -> x.startsWith(q)).sorted().limit(50).toList();
+    @Override public List<String> onTabComplete(CommandSender sender, Command command,
+                                                 String alias, String[] args) {
+        String name = command.getName().toLowerCase(Locale.ROOT);
+
+        if ((name.equals("sell") || name.equals("sellall")) && args.length == 1) {
+            String query = args[0].toUpperCase(Locale.ROOT);
+            return prices.keySet().stream().map(Enum::name)
+                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
         }
-        if (n.equals("prices") && args.length == 1) return List.of("1","2","3","4","5");
-        if (n.equals("cweconomy") && args.length == 1) return List.of("reload","status","maintenance");
-        if (n.equals("cweconomy") && args.length == 2 && args[0].equalsIgnoreCase("maintenance")) return List.of("on","off","block","unblock","status");
+
+        if (name.equals("buy") && args.length == 1) {
+            String query = args[0].toUpperCase(Locale.ROOT);
+            return shopPrices.keySet().stream().map(Enum::name)
+                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
+        }
+
+        if ((name.equals("prices") || name.equals("shop")) && args.length == 1) {
+            return List.of("1", "2", "3", "4", "5");
+        }
+
+        if (name.equals("cweconomy") && args.length == 1) {
+            return List.of("reload", "status", "maintenance");
+        }
+
+        if (name.equals("cweconomy") && args.length == 2
+                && args[0].equalsIgnoreCase("maintenance")) {
+            return List.of("on", "off", "block", "unblock", "status");
+        }
+
         return List.of();
     }
 
