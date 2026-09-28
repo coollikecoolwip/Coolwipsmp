@@ -572,7 +572,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         pendingTrades.put(buyer.getUniqueId(),
-                new PendingTrade(seller.getUniqueId(), seller.getName(), material.name(), amount, total,
+                new PendingTrade(buyer.getUniqueId(), seller.getUniqueId(), seller.getName(), material.name(), amount, total,
                         System.currentTimeMillis() + 30_000L));
 
         buyer.sendMessage("§eTrade offer created:");
@@ -910,7 +910,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private record PendingSale(String material, int amount, long payout, long expiresAt) {}
-    private record PendingTrade(UUID buyerUuid, String sellerName, String material, int amount,
+    private record PendingTrade(UUID buyerUuid, UUID sellerUuid, String sellerName, String material, int amount,
                                 long total, long expiresAt) {}
     private record Transaction(UUID uuid, String player, String material, int amount, long money,
                                boolean purchase, String timestamp) {}
