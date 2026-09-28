@@ -27,6 +27,14 @@ commands:
     description: Buy another player's items using the item sell price.
     usage: /pay <player> <item> [amount]
     permission: coolwipseconomy.use
+  sellto:
+    description: Sell an item directly to another player.
+    usage: /sellto <player> <item> [amount]
+    permission: coolwipseconomy.use
+  buyfrom:
+    description: Buy an item directly from another player.
+    usage: /buyfrom <player> <item> [amount]
+    permission: coolwipseconomy.use
   prices:
     description: View item sell prices.
     usage: /prices [page]
