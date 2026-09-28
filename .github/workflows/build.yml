@@ -2,8 +2,11 @@ name: Build CoolWips Economy
 
 on:
   push:
+    paths:
+      - 'CoolWipsEconomy/**'
+      - '.github/workflows/build.yml'
     paths-ignore:
-      - 'CoolWipsEconomy-*.jar'
+      - 'CoolWipsEconomy/*.jar'
   workflow_dispatch:
 
 permissions:
@@ -12,6 +15,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: CoolWipsEconomy
     steps:
       - uses: actions/checkout@v4
 
@@ -31,15 +37,16 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: CoolWipsEconomy
-          path: ${{ steps.jar.outputs.path }}
+          path: CoolWipsEconomy/${{ steps.jar.outputs.path }}
 
       - name: Put plugin JAR in repository
+        working-directory: .
         run: |
-          JAR="$(find target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' | head -n 1)"
-          cp "$JAR" "./$(basename "$JAR")"
+          JAR="$(find CoolWipsEconomy/target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' | head -n 1)"
+          cp "$JAR" "CoolWipsEconomy/$(basename "$JAR")"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add 'CoolWipsEconomy-*.jar'
+          git add 'CoolWipsEconomy/*.jar'
           if git diff --cached --quiet; then
             echo "JAR is already up to date."
           else
