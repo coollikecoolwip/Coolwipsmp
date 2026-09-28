@@ -114,15 +114,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
 
-                // Every Minecraft block is sellable. Explicit prices in prices.txt override
-                // the default price below. This means new blocks added by Minecraft are
-                // automatically available even if prices.txt has not been updated yet.
-                for (Material material : Material.values()) {
-                    if (material.isBlock() && !material.isAir()) {
-                        loaded.putIfAbsent(material, 1L);
-                    }
-                }
-
+                // Only materials explicitly listed in prices.txt are sellable.
+                // There is deliberately NO automatic $1 fallback for missing blocks.
                 prices.clear();
                 prices.putAll(loaded);
                 getLogger().info("Loaded " + loaded.size() + " prices from GitHub.");
