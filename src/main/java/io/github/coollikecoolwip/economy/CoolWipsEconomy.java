@@ -19,10 +19,10 @@ import java.util.regex.Pattern;
 
 public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter {
     private static final Pattern CASH = Pattern.compile("\"cash\"\\s*:\\s*(-?\\d+)");
-    private final Map<Material, Long> prices = new HashMap<>();
+    private final Map<Material, Long> prices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
-    private String token, guildId, baseUrl, reason;
+    private String token, guildId, baseUrl, reason, pricesUrl;
     private int maxItems, pricesPerPage;
     private long maxMoney;
 
@@ -34,33 +34,40 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             PluginCommand c = getCommand(name);
             if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
         }
-        getLogger().info("CoolWips Economy enabled. " + prices.size() + " prices loaded.");
+        getLogger().info("CoolWips Economy enabled. " + prices.size() + " fallback prices loaded.");
         if (tokenMissing()) getLogger().warning("Set your UnbelievaBoat API token in config.yml.");
+        loadRemotePrices();
     }
 
     private void loadSettings() {
         reloadConfig();
         token = getConfig().getString("api-token", "").trim();
         guildId = getConfig().getString("guild-id", "").trim();
+        pricesUrl = getConfig().getString("prices-url",
+                "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/prices.txt").trim();
         baseUrl = getConfig().getString("api.base-url", "https://unbelievaboat.com/api/v1").replaceAll("/+$", "");
         reason = getConfig().getString("api.reason", "CoolWips SMP Minecraft sale");
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
-        prices.clear();
+
+        Map<Material, Long> fallback = new HashMap<>();
         var section = getConfig().getConfigurationSection("prices");
-        if (section == null) return;
-        for (String key : section.getKeys(false)) {
+        if (section != null) for (String key : section.getKeys(false)) {
             Material m = Material.matchMaterial(key);
             long p = getConfig().getLong("prices." + key);
-            if (m != null && p >= 0) prices.put(m, p);
+            if (m != null && p >= 0) fallback.put(m, p);
         }
+        prices.clear();
+        prices.putAll(fallback);
     }
 
     private int timeout() { return Math.max(5, getConfig().getInt("api.timeout-seconds", 15)); }
+
     private boolean tokenMissing() {
         return token.isBlank() || token.equalsIgnoreCase("PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE") || guildId.isBlank();
     }
+
     private String userUrl(String discordId) { return baseUrl + "/guilds/" + guildId + "/users/" + discordId; }
 
     private HttpResult api(String method, String url, String body) {
@@ -77,6 +84,78 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         } catch (Exception e) {
             return new HttpResult(0, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
+    }
+
+    private void loadRemotePrices() {
+        if (pricesUrl.isBlank()) {
+            getLogger().warning("No prices-url configured; using local fallback prices.");
+            return;
+        }
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                String url = pricesUrl + (pricesUrl.contains("?") ? "&" : "?")
+                        + "cacheBust=" + System.currentTimeMillis();
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .timeout(Duration.ofSeconds(timeout()))
+                        .header("Accept", "text/plain")
+                        .header("Cache-Control", "no-cache")
+                        .GET().build();
+                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    getLogger().warning("Could not load remote prices.txt (HTTP " + response.statusCode()
+                            + "). Using local fallback prices.");
+                    return;
+                }
+
+                Map<Material, Long> loaded = parsePrices(response.body());
+                if (loaded.isEmpty()) {
+                    getLogger().warning("Remote prices.txt contained no valid prices. Using local fallback prices.");
+                    return;
+                }
+
+                prices.clear();
+                prices.putAll(loaded);
+                getLogger().info("Loaded " + loaded.size() + " prices from GitHub.");
+            } catch (Exception e) {
+                getLogger().warning("Could not load remote prices.txt: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+                        + ". Using local fallback prices.");
+            }
+        });
+    }
+
+    private Map<Material, Long> parsePrices(String text) {
+        Map<Material, Long> loaded = new HashMap<>();
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            int separator = line.indexOf('=');
+            if (separator < 0) separator = line.indexOf(':');
+            if (separator <= 0) continue;
+
+            String materialName = line.substring(0, separator).trim()
+                    .toUpperCase(Locale.ROOT).replace('-', '_').replace(' ', '_');
+            String valueText = line.substring(separator + 1).trim();
+
+            try {
+                long value = Long.parseLong(valueText);
+                Material material = Material.matchMaterial(materialName);
+                if (material == null) {
+                    getLogger().warning("Ignoring unknown material in prices.txt: " + materialName);
+                    continue;
+                }
+                if (value < 0) {
+                    getLogger().warning("Ignoring negative price for " + materialName);
+                    continue;
+                }
+                loaded.put(material, value);
+            } catch (NumberFormatException ignored) {
+                getLogger().warning("Ignoring invalid price line: " + rawLine);
+            }
+        }
+        return loaded;
     }
 
     private String json(String s) { return s.replace("\\", "\\\\").replace("\"", "\\\""); }
@@ -111,12 +190,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
             case "cweconomy" -> {
                 if (args.length != 1 || (!args[0].equalsIgnoreCase("reload") && !args[0].equalsIgnoreCase("status"))) {
-                    sender.sendMessage("§e/cweconomy reload §7- reload config");
+                    sender.sendMessage("§e/cweconomy reload §7- reload prices/config");
                     sender.sendMessage("§e/cweconomy status §7- test API");
                     return true;
                 }
-                if (args[0].equalsIgnoreCase("reload")) { loadSettings(); sender.sendMessage("§aCoolWips Economy reloaded."); }
-                else status(sender);
+                if (args[0].equalsIgnoreCase("reload")) {
+                    loadSettings();
+                    loadRemotePrices();
+                    sender.sendMessage("§aCoolWips Economy reload started. Loading prices from GitHub...");
+                } else status(sender);
                 return true;
             }
             default -> { return false; }
@@ -222,6 +304,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         s.sendMessage("§7API token: " + (tokenMissing() ? "§cNOT SET" : "§aSET"));
         s.sendMessage("§7Guild ID: §f" + (guildId.isBlank() ? "missing" : guildId));
         s.sendMessage("§7DiscordSRV: " + (Bukkit.getPluginManager().isPluginEnabled("DiscordSRV") ? "§aenabled" : "§cdisabled"));
+        s.sendMessage("§7GitHub prices: §f" + (pricesUrl.isBlank() ? "disabled" : pricesUrl));
+        s.sendMessage("§7Loaded prices: §f" + prices.size());
         if (tokenMissing()) return;
         s.sendMessage("§7Testing UnbelievaBoat...");
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
