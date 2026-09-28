@@ -3,10 +3,25 @@ package io.github.coollikecoolwip.economy;
 import github.scarsz.discordsrv.DiscordSRV;
 import org.bukkit.Bukkit;
 import org.bukkit.Material;
+import org.bukkit.Location;
 import org.bukkit.command.*;
+import org.bukkit.block.Block;
+import org.bukkit.block.Chest;
+import org.bukkit.block.DoubleChest;
 import org.bukkit.entity.Player;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.Listener;
+import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.player.PlayerInteractEvent;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.java.JavaPlugin;
+import org.bukkit.persistence.PersistentDataType;
+import org.bukkit.NamespacedKey;
+import org.bukkit.event.block.Action;
 
 import java.net.URI;
 import java.net.http.*;
@@ -17,7 +32,7 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter {
+public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter, Listener {
     private static final Pattern CASH = Pattern.compile("\"cash\"\\s*:\\s*(-?\\d+)");
     private final Map<Material, Long> prices = new ConcurrentHashMap<>();
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
@@ -37,13 +52,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private int transactionCooldownMs;
     private int confirmationSeconds;
     private double sellTax, buyTax;
+    private NamespacedKey sellChestOwnerKey;
+    private final Map<String, ReentrantLock> sellChestLocks = new ConcurrentHashMap<>();
 
     @Override public void onEnable() {
         saveDefaultConfig();
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
+        sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
+        Bukkit.getPluginManager().registerEvents(this, this);
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","history")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -352,6 +371,58 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return true;
             }
 
+            case "sellchest" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /sellchest.");
+                    return true;
+                }
+                if (args.length != 1 || (!args[0].equalsIgnoreCase("create")
+                        && !args[0].equalsIgnoreCase("remove")
+                        && !args[0].equalsIgnoreCase("status"))) {
+                    p.sendMessage("§e/sellchest create §7- make the chest you are looking at a sell chest");
+                    p.sendMessage("§e/sellchest remove §7- remove sell-chest status");
+                    p.sendMessage("§e/sellchest status §7- check the chest you are looking at");
+                    return true;
+                }
+
+                Block target = p.getTargetBlockExact(6);
+                if (target == null || !isChestBlock(target)) {
+                    p.sendMessage("§cLook directly at a chest within 6 blocks.");
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("create")) {
+                    if (sellChestOwner(target) != null) {
+                        p.sendMessage("§cThat chest is already a sell chest.");
+                        return true;
+                    }
+                    markSellChest(target, p.getUniqueId());
+                    p.sendMessage("§aSell chest created. Put sellable items inside and close the chest to sell them.");
+                    return true;
+                }
+
+                UUID owner = sellChestOwner(target);
+                if (owner == null) {
+                    p.sendMessage("§7That chest is not a sell chest.");
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("status")) {
+                    p.sendMessage(owner.equals(p.getUniqueId())
+                            ? "§aThis is your sell chest."
+                            : "§cThis is another player's sell chest.");
+                    return true;
+                }
+
+                if (!owner.equals(p.getUniqueId()) && !p.isOp()) {
+                    p.sendMessage("§cOnly the owner can remove this sell chest.");
+                    return true;
+                }
+                unmarkSellChest(target);
+                p.sendMessage("§aSell chest removed. The items inside were not changed.");
+                return true;
+            }
+
             case "shop" -> {
                 int page = parsePage(sender, args);
                 if (page < 1) return true;
@@ -421,6 +492,276 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
         }
     }
+
+    @EventHandler
+    public void onSellChestOpen(PlayerInteractEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND || event.getAction() != Action.RIGHT_CLICK_BLOCK) return;
+        Block block = event.getClickedBlock();
+        if (block == null || !isChestBlock(block)) return;
+
+        UUID owner = sellChestOwner(block);
+        if (owner == null) return;
+
+        Player player = event.getPlayer();
+        if (!owner.equals(player.getUniqueId()) && !player.isOp()) {
+            event.setCancelled(true);
+            player.sendMessage("§cThat is not your sell chest.");
+            return;
+        }
+
+        ReentrantLock lock = sellChestLocks.get(chestKey(block));
+        if (lock != null && lock.isLocked()) {
+            event.setCancelled(true);
+            player.sendMessage("§eThat sell chest is processing a sale. Please wait.");
+        }
+    }
+
+    @EventHandler
+    public void onSellChestBreak(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        if (!isChestBlock(block)) return;
+
+        UUID owner = sellChestOwner(block);
+        if (owner == null) return;
+
+        Player player = event.getPlayer();
+        if (!owner.equals(player.getUniqueId()) && !player.isOp()) {
+            event.setCancelled(true);
+            player.sendMessage("§cOnly the owner can break this sell chest.");
+            return;
+        }
+
+        unmarkSellChest(block);
+    }
+
+    @EventHandler
+    public void onSellChestClose(InventoryCloseEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+
+        SellChestInfo info = getSellChestInfo(event.getInventory());
+        if (info == null || !info.owner().equals(player.getUniqueId())) return;
+
+        ReentrantLock lock = sellChestLocks.computeIfAbsent(info.key(), k -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            player.sendMessage("§eThis sell chest is already processing.");
+            return;
+        }
+
+        if (sellsDisabled) {
+            lock.unlock();
+            player.sendMessage("§cSelling is currently disabled for maintenance.");
+            return;
+        }
+
+        Inventory inventory = event.getInventory();
+        Map<Material, Integer> amounts = new LinkedHashMap<>();
+        int totalItems = 0;
+        long gross = 0;
+
+        for (ItemStack stack : inventory.getContents()) {
+            if (stack == null || stack.getType().isAir()) continue;
+            Material material = stack.getType();
+            Long unit = prices.get(material);
+            if (unit == null || maintenanceBlocks.contains(material)) continue;
+
+            int amount = stack.getAmount();
+            if (totalItems > maxItems - amount) {
+                lock.unlock();
+                player.sendMessage("§cThis sell chest contains more than " + maxItems
+                        + " sellable items. Remove some items and close it again.");
+                return;
+            }
+
+            long value;
+            try {
+                value = Math.multiplyExact(unit, amount);
+                gross = Math.addExact(gross, value);
+            } catch (ArithmeticException e) {
+                lock.unlock();
+                player.sendMessage("§cThe sell chest value is too large.");
+                return;
+            }
+
+            totalItems += amount;
+            amounts.merge(material, amount, Integer::sum);
+        }
+
+        if (amounts.isEmpty()) {
+            lock.unlock();
+            return;
+        }
+
+        if (gross > maxMoney) {
+            lock.unlock();
+            player.sendMessage("§cThis sell chest exceeds the $" + money(maxMoney)
+                    + " payout limit. Remove some items.");
+            return;
+        }
+
+        long payout = afterTax(gross, sellTax);
+        if (payout < 1) {
+            lock.unlock();
+            player.sendMessage("§cThe sell chest value after tax is less than $1.");
+            return;
+        }
+
+        List<ItemStack> removed = new ArrayList<>();
+        ItemStack[] contents = inventory.getContents();
+
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack == null || stack.getType().isAir()) continue;
+            if (!amounts.containsKey(stack.getType())) continue;
+
+            removed.add(stack.clone());
+            contents[i] = null;
+        }
+        inventory.setContents(contents);
+
+        String discordId = linkedId(player);
+        if (discordId == null) {
+            restoreChestItems(inventory, removed);
+            lock.unlock();
+            return;
+        }
+
+        final long finalPayout = payout;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            HttpResult result = api("PATCH", userUrl(discordId),
+                    "{\"cash\":" + finalPayout + ",\"reason\":\""
+                            + json("CoolWips SMP sell chest") + "\"}");
+
+            if (!success(result)) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    restoreChestItems(inventory, removed);
+                    player.sendMessage("§cSell chest payout failed. Your items were returned. UnbelievaBoat HTTP "
+                            + result.status + ".");
+                    lock.unlock();
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
+                    long itemGross = (long) entry.getValue() * prices.get(entry.getKey());
+                    long itemPayout = afterTax(itemGross, sellTax);
+                    record(new Transaction(player.getUniqueId(), player.getName(), entry.getKey().name(),
+                            entry.getValue(), itemPayout, false, new java.util.Date().toString()));
+                }
+
+                player.sendMessage("§aSell chest sold §f" + totalItems + " items §afor §a$"
+                        + money(finalPayout) + "§a.");
+                lock.unlock();
+            });
+        });
+    }
+
+    private boolean isChestBlock(Block block) {
+        return block.getState() instanceof Chest;
+    }
+
+    private UUID sellChestOwner(Block block) {
+        if (!(block.getState() instanceof Chest chest)) return null;
+        String value = chest.getPersistentDataContainer().get(sellChestOwnerKey, PersistentDataType.STRING);
+        if (value == null) return null;
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private void markSellChest(Block block, UUID owner) {
+        if (!(block.getState() instanceof Chest chest)) return;
+        chest.getPersistentDataContainer().set(sellChestOwnerKey, PersistentDataType.STRING, owner.toString());
+        chest.update(true, false);
+
+        Block other = adjacentChest(block);
+        if (other != null && other.getState() instanceof Chest otherChest) {
+            otherChest.getPersistentDataContainer().set(sellChestOwnerKey, PersistentDataType.STRING, owner.toString());
+            otherChest.update(true, false);
+        }
+    }
+
+    private void unmarkSellChest(Block block) {
+        if (block.getState() instanceof Chest chest) {
+            chest.getPersistentDataContainer().remove(sellChestOwnerKey);
+            chest.update(true, false);
+        }
+
+        Block other = adjacentChest(block);
+        if (other != null && other.getState() instanceof Chest otherChest) {
+            otherChest.getPersistentDataContainer().remove(sellChestOwnerKey);
+            otherChest.update(true, false);
+        }
+    }
+
+    private Block adjacentChest(Block block) {
+        for (var face : List.of(org.bukkit.block.BlockFace.NORTH, org.bukkit.block.BlockFace.SOUTH,
+                org.bukkit.block.BlockFace.EAST, org.bukkit.block.BlockFace.WEST)) {
+            Block other = block.getRelative(face);
+            if (isChestBlock(other)) return other;
+        }
+        return null;
+    }
+
+    private SellChestInfo getSellChestInfo(Inventory inventory) {
+        InventoryHolder holder = inventory.getHolder();
+        if (holder instanceof Chest chest) {
+            UUID owner = sellChestOwner(chest.getBlock());
+            return owner == null ? null : new SellChestInfo(owner, chest.getBlock().getLocation(), chestKey(chest.getBlock()));
+        }
+
+        if (holder instanceof DoubleChest doubleChest) {
+            InventoryHolder left = doubleChest.getLeftSide();
+            if (left instanceof Chest leftChest) {
+                UUID owner = sellChestOwner(leftChest.getBlock());
+                if (owner != null) {
+                    return new SellChestInfo(owner, leftChest.getBlock().getLocation(), chestKey(leftChest.getBlock()));
+                }
+            }
+
+            InventoryHolder right = doubleChest.getRightSide();
+            if (right instanceof Chest rightChest) {
+                UUID owner = sellChestOwner(rightChest.getBlock());
+                if (owner != null) {
+                    return new SellChestInfo(owner, rightChest.getBlock().getLocation(), chestKey(rightChest.getBlock()));
+                }
+            }
+        }
+
+        return null;
+    }
+
+    private String chestKey(Block block) {
+        return block.getWorld().getUID() + ":" + block.getX() + ":" + block.getY() + ":" + block.getZ();
+    }
+
+    private void restoreChestItems(Inventory inventory, List<ItemStack> items) {
+        for (ItemStack item : items) {
+            Map<Integer, ItemStack> leftovers = inventory.addItem(item.clone());
+            if (leftovers.isEmpty()) continue;
+
+            Location dropLocation = null;
+            InventoryHolder holder = inventory.getHolder();
+            if (holder instanceof Chest chest) {
+                dropLocation = chest.getBlock().getLocation().add(0.5, 0.5, 0.5);
+            } else if (holder instanceof DoubleChest doubleChest) {
+                InventoryHolder left = doubleChest.getLeftSide();
+                if (left instanceof Chest chest) {
+                    dropLocation = chest.getBlock().getLocation().add(0.5, 0.5, 0.5);
+                }
+            }
+
+            if (dropLocation != null) {
+                for (ItemStack leftover : leftovers.values()) {
+                    dropLocation.getWorld().dropItemNaturally(dropLocation, leftover);
+                }
+            }
+        }
+    }
+
+    private record SellChestInfo(UUID owner, Location location, String key) {}
 
     private int parseAmount(Player p, String text) {
         try {
@@ -1229,6 +1570,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             String query = args[1].toUpperCase(Locale.ROOT);
             return prices.keySet().stream().map(Enum::name)
                     .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
+        }
+
+        if (name.equals("sellchest") && args.length == 1) {
+            return List.of("create", "remove", "status");
         }
 
         if (name.equals("cweconomy") && args.length == 1) {
