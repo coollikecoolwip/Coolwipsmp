@@ -23,7 +23,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
-    private String token, guildId, baseUrl, reason, pricesUrl;
+    private String token, guildId, baseUrl, reason, pricesUrl, shopUrl, buyReason;
     private int maxItems, pricesPerPage;
     private long maxMoney;
     private boolean sellsDisabled;
@@ -33,7 +33,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         saveDefaultConfig();
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop")) {
             PluginCommand c = getCommand(name);
             if (c != null) { c.setExecutor(this); c.setTabCompleter(this); }
         }
