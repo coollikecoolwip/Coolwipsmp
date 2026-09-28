@@ -392,8 +392,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 }
 
                 if (args[0].equalsIgnoreCase("create")) {
-                    if (sellChestOwner(target) != null) {
-                        p.sendMessage("§cThat chest is already a sell chest.");
+                    if (sellChestOwner(target) != null || (adjacentChest(target) != null
+                            && sellChestOwner(adjacentChest(target)) != null)) {
+                        p.sendMessage("§cThat chest is already part of a sell chest.");
                         return true;
                     }
                     markSellChest(target, p.getUniqueId());
