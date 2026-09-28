@@ -28,6 +28,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private long maxMoney;
     private boolean sellsDisabled;
     private final Set<Material> maintenanceBlocks = ConcurrentHashMap.newKeySet();
+    private final Map<UUID, Long> lastTransaction = new ConcurrentHashMap<>();
+    private final Map<UUID, PendingSale> pendingSales = new ConcurrentHashMap<>();
+    private final Deque<Transaction> history = new ArrayDeque<>();
+    private int transactionCooldownMs;
+    private int confirmationSeconds;
+    private double sellTax;
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -64,6 +70,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
+        transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
+        confirmationSeconds = Math.max(0, getConfig().getInt("settings.confirmation-seconds", 10));
+        sellTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.sell-tax", 0.05)));
 
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
@@ -618,6 +627,38 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         p.getInventory().setStorageContents(contents);
     }
+
+    private long afterTax(long gross, double tax) {
+        return Math.max(0, Math.round(gross * (1.0 - tax)));
+    }
+
+    private boolean cooldownReady(Player p) {
+        if (transactionCooldownMs <= 0) return true;
+        long now = System.currentTimeMillis();
+        long last = lastTransaction.getOrDefault(p.getUniqueId(), 0L);
+        long remaining = transactionCooldownMs - (now - last);
+        if (remaining > 0) {
+            p.sendMessage("§cPlease wait " + String.format(Locale.US, "%.1f", remaining / 1000.0) + "s before another transaction.");
+            return false;
+        }
+        lastTransaction.put(p.getUniqueId(), now);
+        return true;
+    }
+
+    private String money(long value) {
+        return String.format(Locale.US, "%,d", value);
+    }
+
+    private void record(Transaction transaction) {
+        synchronized (history) {
+            history.addFirst(transaction);
+            while (history.size() > 1000) history.removeLast();
+        }
+    }
+
+    private record PendingSale(String material, int amount, long payout, long expiresAt) {}
+    private record Transaction(UUID uuid, String player, String material, int amount, long money,
+                               boolean purchase, String timestamp) {}
 
     private boolean success(HttpResult result) {
         return result.status >= 200 && result.status < 300;
