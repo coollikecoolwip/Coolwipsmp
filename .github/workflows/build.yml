@@ -3,7 +3,7 @@ name: Build CoolWips Economy
 on:
   push:
     paths-ignore:
-      - 'CoolWipsEconomy-1.0.0.jar'
+      - 'CoolWipsEconomy-*.jar'
   workflow_dispatch:
 
 permissions:
@@ -23,18 +23,23 @@ jobs:
       - name: Build
         run: mvn -U clean package
 
+      - name: Find built JAR
+        id: jar
+        run: echo "path=$(find target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' | head -n 1)" >> "$GITHUB_OUTPUT"
+
       - name: Upload plugin artifact
         uses: actions/upload-artifact@v4
         with:
           name: CoolWipsEconomy
-          path: target/CoolWipsEconomy-1.0.0.jar
+          path: ${{ steps.jar.outputs.path }}
 
       - name: Put plugin JAR in repository
         run: |
-          cp target/CoolWipsEconomy-1.0.0.jar ./CoolWipsEconomy-1.0.0.jar
+          JAR="$(find target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' | head -n 1)"
+          cp "$JAR" "./$(basename "$JAR")"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add CoolWipsEconomy-1.0.0.jar
+          git add 'CoolWipsEconomy-*.jar'
           if git diff --cached --quiet; then
             echo "JAR is already up to date."
           else
