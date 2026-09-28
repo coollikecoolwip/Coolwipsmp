@@ -1,22 +1,71 @@
 api-token: "PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE"
 guild-id: "1025178490481418280"
 prices-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt"
+shop-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt"
 api:
   base-url: "https://unbelievaboat.com/api/v1"
   timeout-seconds: 15
   reason: "CoolWips SMP Minecraft sale"
+  buy-reason: "CoolWips SMP Minecraft shop purchase"
 settings:
   maximum-items-per-sale: 2304
   maximum-money-per-sale: 1000000
   prices-per-page: 15
-# Local fallback prices. GitHub prices.txt replaces these after it loads.
 prices:
   DIAMOND: 250
   IRON_INGOT: 25
   GOLD_INGOT: 40
   COAL: 8
   WHEAT: 5
-
+shop:
+  SAND: 15
+  RED_SAND: 15
+  GRAVEL: 15
+  GLASS: 20
+  GLASS_PANE: 10
+  COBBLESTONE: 10
+  STONE: 15
+  DEEPSLATE: 15
+  DIRT: 10
+  CLAY_BALL: 15
+  BRICK: 30
+  OAK_LOG: 30
+  SPRUCE_LOG: 30
+  BIRCH_LOG: 30
+  JUNGLE_LOG: 30
+  ACACIA_LOG: 30
+  DARK_OAK_LOG: 30
+  MANGROVE_LOG: 30
+  CHERRY_LOG: 30
+  BAMBOO: 12
+  STICK: 5
+  PAPER: 25
+  BOOK: 60
+  BOOKSHELF: 200
+  TORCH: 20
+  LANTERN: 75
+  CHEST: 100
+  BARREL: 100
+  HOPPER: 500
+  BUCKET: 250
+  WATER_BUCKET: 500
+  LAVA_BUCKET: 750
+  RAIL: 25
+  POWERED_RAIL: 150
+  REDSTONE: 30
+  REDSTONE_TORCH: 50
+  REPEATER: 100
+  COMPARATOR: 150
+  PISTON: 250
+  STICKY_PISTON: 400
+  OBSERVER: 500
+  CRAFTING_TABLE: 50
+  FURNACE: 100
+  SMOKER: 150
+  BLAST_FURNACE: 250
+  ANVIL: 2500
+  LEAD: 200
+  NAME_TAG: 1000
 maintenance:
   all-sells-disabled: false
   blocked-items: []
