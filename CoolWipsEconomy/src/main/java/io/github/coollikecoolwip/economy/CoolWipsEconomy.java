@@ -237,6 +237,44 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
 
+    private Map<Material, Long> parsePrices(String text, String label) {
+        Map<Material, Long> loaded = new HashMap<>();
+
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            int separator = line.indexOf('=');
+            if (separator < 0) separator = line.indexOf(':');
+            if (separator <= 0) continue;
+
+            String materialName = line.substring(0, separator).trim()
+                    .toUpperCase(Locale.ROOT)
+                    .replace('-', '_')
+                    .replace(' ', '_');
+
+            try {
+                long value = Long.parseLong(line.substring(separator + 1).trim());
+                Material material = Material.matchMaterial(materialName);
+
+                if (material == null) {
+                    getLogger().warning("Ignoring unknown material in " + label + ": " + materialName);
+                    continue;
+                }
+                if (value <= 0) {
+                    getLogger().warning("Ignoring non-positive price in " + label + ": " + materialName);
+                    continue;
+                }
+
+                loaded.put(material, value);
+            } catch (NumberFormatException e) {
+                getLogger().warning("Ignoring invalid price line in " + label + ": " + rawLine);
+            }
+        }
+
+        return loaded;
+    }
+
     private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination) {
         if (fileUrl.isBlank()) {
             getLogger().warning("Remote " + label + " URL is blank.");
@@ -750,7 +788,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
                 for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
-                    long itemGross = (long) entry.getValue() * prices.get(entry.getKey());
+                    BigDecimal itemGross = prices.get(entry.getKey()).multiply(BigDecimal.valueOf(entry.getValue()));
                     long itemPayout = afterTax(itemGross, sellTax);
                     record(new Transaction(info.owner(), Bukkit.getOfflinePlayer(info.owner()).getName(),
                             entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
@@ -1038,7 +1076,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         Material material = matchMaterial(rawItem);
-        Long unit = material == null ? null : prices.get(material);
+        BigDecimal unit = material == null ? null : prices.get(material);
         if (unit == null) {
             buyer.sendMessage("§cThat item is not in the sell-price list.");
             return;
@@ -1555,7 +1593,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private void showPaged(CommandSender sender, Map<Material, ?> map,
                            int page, String title, String command) {
-        List<Map.Entry<Material, ?>> list = map.entrySet().stream()
+        List<? extends Map.Entry<Material, ?>> list = map.entrySet().stream()
                 .sorted(Comparator.comparing(e -> e.getKey().name()))
                 .toList();
 
