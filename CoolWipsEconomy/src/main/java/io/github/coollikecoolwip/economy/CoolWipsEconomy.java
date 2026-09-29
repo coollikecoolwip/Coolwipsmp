@@ -733,7 +733,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
         inventory.setContents(contents);
 
-        String discordId = Bukkit.getOfflinePlayer(info.owner()).getName() == null ? null : linkedId(info.owner());
+        String discordId = linkedId(info.owner());
         if (discordId == null) {
             restoreChestItems(inventory, removed);
             lock.unlock();
@@ -1469,6 +1469,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private boolean success(HttpResult result) {
         return result.status >= 200 && result.status < 300;
+    }
+
+    private String linkedId(UUID uuid) {
+        try {
+            String id = DiscordSRV.getPlugin().getAccountLinkManager().getDiscordId(uuid);
+            return (id == null || id.isBlank()) ? null : id;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String linkedId(Player p) {
