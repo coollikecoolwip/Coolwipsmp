@@ -389,10 +389,10 @@ QUARTZ_BLOCK=120
 
 # Netherite convenience money sinks.
 # 4 Ancient Debris -> 4 Netherite Scrap -> 1 Netherite Ingot, so each step remains expensive.
-ANCIENT_DEBRIS=2000
-NETHERITE_SCRAP=2500
-NETHERITE_INGOT=10000
-NETHERITE_BLOCK=90000
+ANCIENT_DEBRIS=3000
+NETHERITE_SCRAP=4500
+NETHERITE_INGOT=15000
+NETHERITE_BLOCK=135000
 
 # Ore money sinks
 # Buying ore is intentionally expensive so mining remains the cheaper option.
