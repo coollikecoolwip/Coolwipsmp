@@ -84,6 +84,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         loadRemotePrices();
         loadRemoteShop();
+        startNonNegativeBalanceGuard();
     }
 
     private void loadSettings() {
@@ -1251,6 +1252,26 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         final long total = trade.total();
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Long balance = bankBalance(buyerDiscord);
+            if (balance == null) {
+                first.unlock();
+                second.unlock();
+                Bukkit.getScheduler().runTask(this, () -> {
+                    buyer.sendMessage("§cTrade cancelled. I could not verify the buyer's balance.");
+                    seller.sendMessage("§cTrade cancelled because the buyer's balance could not be verified.");
+                });
+                return;
+            }
+            if (balance < 0 || balance < total) {
+                first.unlock();
+                second.unlock();
+                Bukkit.getScheduler().runTask(this, () -> {
+                    buyer.sendMessage("§cTrade cancelled. The buyer does not have enough money; their balance cannot go below $0.");
+                    seller.sendMessage("§cTrade cancelled because the buyer does not have enough money.");
+                });
+                return;
+            }
+
             HttpResult debit = api("PATCH", userUrl(buyerDiscord),
                     "{\"bank\":" + (-total) + ",\"reason\":\"Player item trade purchase\"}");
 
@@ -1403,6 +1424,20 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final Material finalMaterial = material;
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Long balance = bankBalance(discordId);
+            if (balance == null) {
+                lock.unlock();
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cPurchase cancelled. I could not verify your balance."));
+                return;
+            }
+            if (balance < 0 || balance < money) {
+                lock.unlock();
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cPurchase cancelled. You do not have enough money; your balance cannot go below $0."));
+                return;
+            }
+
             // UnbelievaBoat treats negative bank as a withdrawal from the user's bank balance.
             HttpResult debit = api("PATCH", userUrl(discordId),
                     "{\"bank\":" + (-money) + ",\"reason\":\"" + json(buyReason) + "\"}");
@@ -1459,6 +1494,57 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             getLogger().warning("Could not read UnbelievaBoat bank balance: " + e.getMessage());
             return null;
         }
+    }
+
+    private void startNonNegativeBalanceGuard() {
+        final long periodTicks = 20L * 10L;
+
+        Bukkit.getScheduler().runTaskTimer(this, () -> {
+            Map<UUID, String> accounts = new HashMap<>();
+
+            for (Player player : Bukkit.getOnlinePlayers()) {
+                String discordId = linkedId(player.getUniqueId());
+                if (discordId != null) {
+                    accounts.put(player.getUniqueId(), discordId);
+                }
+            }
+
+            if (accounts.isEmpty()) return;
+
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                for (Map.Entry<UUID, String> entry : accounts.entrySet()) {
+                    String discordId = entry.getValue();
+                    Long balance = bankBalance(discordId);
+                    if (balance == null || balance >= 0) continue;
+
+                    if (balance < Integer.MIN_VALUE) {
+                        getLogger().severe("Negative UnbelievaBoat balance for " + discordId
+                                + " is below the API integer range; automatic repair failed.");
+                        continue;
+                    }
+
+                    long repair = -balance;
+                    HttpResult result = api("PATCH", userUrl(discordId),
+                            "{\"bank\":" + repair + ",\"reason\":\"CoolWips SMP negative-balance safeguard\"}");
+
+                    Long repairedBalance = parseBank(result.body);
+                    if (success(result) && repairedBalance != null && repairedBalance >= 0) {
+                        getLogger().warning("Repaired negative UnbelievaBoat bank balance for "
+                                + discordId + " from $" + balance + " to $" + repairedBalance + ".");
+                        UUID uuid = entry.getKey();
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            Player player = Bukkit.getPlayer(uuid);
+                            if (player != null && player.isOnline()) {
+                                player.sendMessage("§eYour negative economy balance was automatically corrected to $0.");
+                            }
+                        });
+                    } else {
+                        getLogger().severe("Could not repair negative UnbelievaBoat balance for "
+                                + discordId + ". HTTP " + result.status + ".");
+                    }
+                }
+            });
+        }, periodTicks, periodTicks);
     }
 
     private void reverseMoney(String discordId, long money, String reversalReason,
