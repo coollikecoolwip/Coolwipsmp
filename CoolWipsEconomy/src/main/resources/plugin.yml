@@ -24,8 +24,8 @@ commands:
     usage: /shop [page]
     permission: coolwipseconomy.use
   pay:
-    description: Buy another player's items using the item sell price.
-    usage: /pay <player> <item> [amount]
+    description: Send server cash to another player or start an item trade.
+    usage: /pay <player> <amount> or /pay <player> <item> [amount]
     permission: coolwipseconomy.use
   sellto:
     description: Sell an item directly to another player.

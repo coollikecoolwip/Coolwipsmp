@@ -460,11 +460,23 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     p.sendMessage("§7Pending item trade cancelled.");
                     return true;
                 }
+
+                if (args.length == 2) {
+                    try {
+                        long money = Long.parseLong(args[1]);
+                        payCash(p, args[0], money);
+                        return true;
+                    } catch (NumberFormatException ignored) {
+                        // Keep supporting /pay <player> <item> syntax.
+                    }
+                }
+
                 if (args.length < 2 || args.length > 3) {
-                    p.sendMessage("§cUsage: /pay <player> <item> [amount]");
-                    p.sendMessage("§7Example: /pay Steve diamond 5");
+                    p.sendMessage("§cUsage: /pay <player> <amount>");
+                    p.sendMessage("§7Item trade: /pay <player> <item> [amount]");
                     return true;
                 }
+
                 int amount = parseAmount(p, args.length == 3 ? args[2] : "1");
                 if (amount < 1) return true;
                 createTrade(p, args[0], args[1], amount);
@@ -1239,6 +1251,123 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         seller.sendMessage("§7Use §f/pay confirm §7to accept or §f/pay cancel §7to decline.");
     }
 
+    private void payCash(Player sender, String targetName, long amount) {
+        if (amount < 1) {
+            sender.sendMessage("§cPayment amount must be at least $1.");
+            return;
+        }
+        if (amount > maxMoney) {
+            sender.sendMessage("§cYou can pay at most $" + money(maxMoney) + " at once.");
+            return;
+        }
+        if (!cooldownReady(sender)) return;
+
+        Player recipient = Bukkit.getOnlinePlayers().stream()
+                .filter(p -> p.getName().equalsIgnoreCase(targetName))
+                .findFirst()
+                .orElse(null);
+
+        if (recipient == null) {
+            sender.sendMessage("§cThat player must be online.");
+            return;
+        }
+        if (recipient.getUniqueId().equals(sender.getUniqueId())) {
+            sender.sendMessage("§cYou cannot pay yourself.");
+            return;
+        }
+
+        String senderDiscord = linkedId(sender);
+        if (senderDiscord == null) return;
+        String recipientDiscord = linkedId(recipient);
+        if (recipientDiscord == null) {
+            sender.sendMessage("§cThat player must link their Minecraft account with DiscordSRV first.");
+            return;
+        }
+
+        ReentrantLock senderLock = locks.computeIfAbsent(sender.getUniqueId(), k -> new ReentrantLock());
+        ReentrantLock recipientLock = locks.computeIfAbsent(recipient.getUniqueId(), k -> new ReentrantLock());
+
+        ReentrantLock first = sender.getUniqueId().toString().compareTo(recipient.getUniqueId().toString()) < 0
+                ? senderLock : recipientLock;
+        ReentrantLock second = first == senderLock ? recipientLock : senderLock;
+
+        if (!first.tryLock()) {
+            sender.sendMessage("§eYou or the other player currently has another transaction processing.");
+            return;
+        }
+        if (!second.tryLock()) {
+            first.unlock();
+            sender.sendMessage("§eYou or the other player currently has another transaction processing.");
+            return;
+        }
+
+        sender.sendMessage("§7Sending §a$" + money(amount) + " §7to §f" + recipient.getName() + "§7...");
+
+        final long finalAmount = amount;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Long balance = bankBalance(senderDiscord);
+            if (balance == null) {
+                unlockOnMainThread(first, second);
+                Bukkit.getScheduler().runTask(this, () ->
+                        sender.sendMessage("§cPayment cancelled. I could not verify your balance."));
+                return;
+            }
+
+            if (balance < 0 || balance < finalAmount) {
+                unlockOnMainThread(first, second);
+                Bukkit.getScheduler().runTask(this, () ->
+                        sender.sendMessage("§cPayment cancelled. You do not have enough money; your balance cannot go below $0."));
+                return;
+            }
+
+            HttpResult debit = api("PATCH", userUrl(senderDiscord),
+                    "{\"bank\":" + (-finalAmount) + ",\"reason\":\"" +
+                            json("CoolWips SMP player payment to " + recipient.getName()) + "\"}");
+
+            if (!success(debit)) {
+                unlockOnMainThread(first, second);
+                Bukkit.getScheduler().runTask(this, () ->
+                        sender.sendMessage("§cPayment cancelled. UnbelievaBoat HTTP " + debit.status + "."));
+                return;
+            }
+
+            Long remainingBalance = parseBank(debit.body);
+            if (remainingBalance == null || remainingBalance < 0) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    sender.sendMessage("§cPayment cancelled because it would put your balance below $0. Reversing your payment...");
+                    reverseMoney(senderDiscord, finalAmount,
+                            "CoolWips SMP player payment negative-balance safeguard",
+                            sender, first, second);
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                HttpResult credit = api("PATCH", userUrl(recipientDiscord),
+                        "{\"bank\":" + finalAmount + ",\"reason\":\"" +
+                                json("CoolWips SMP player payment from " + sender.getName()) + "\"}");
+
+                if (!success(credit)) {
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        sender.sendMessage("§cPayment failed while crediting the recipient. Your payment is being reversed.");
+                        recipient.sendMessage("§cA payment from §f" + sender.getName() + "§c could not be completed.");
+                        reverseMoney(senderDiscord, finalAmount,
+                                "CoolWips SMP player payment reversal",
+                                sender, first, second);
+                    });
+                    return;
+                }
+
+                Bukkit.getScheduler().runTask(this, () -> {
+                    sender.sendMessage("§aSent §f$" + money(finalAmount) + " §ato §f" + recipient.getName() + "§a.");
+                    recipient.sendMessage("§aReceived §f$" + money(finalAmount) + " §afrom §f" + sender.getName() + "§a.");
+                    first.unlock();
+                    second.unlock();
+                });
+            });
+        });
+    }
+
     private void payConfirm(Player seller) {
         PendingTrade trade = pendingTrades.values().stream()
                 .filter(t -> t.sellerUuid().equals(seller.getUniqueId()))
@@ -2009,7 +2138,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         if (name.equals("pay") && args.length == 1) {
-            return List.of("confirm", "cancel");
+            String query = args[0].toLowerCase(Locale.ROOT);
+            List<String> suggestions = new ArrayList<>(List.of("confirm", "cancel"));
+            Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .filter(x -> x.toLowerCase(Locale.ROOT).startsWith(query))
+                    .sorted()
+                    .limit(48)
+                    .forEach(suggestions::add);
+            return suggestions;
         }
 
         if (name.equals("pay") && args.length == 2) {
