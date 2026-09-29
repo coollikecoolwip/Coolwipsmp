@@ -1250,6 +1250,18 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
 
+            Long remainingTradeBalance = parseBank(debit.body);
+            if (remainingTradeBalance == null || remainingTradeBalance < 0) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    buyer.sendMessage("§cTrade cancelled because it would put your balance below $0. Reversing your payment...");
+                    seller.sendMessage("§cTrade cancelled because the buyer's balance would go below $0.");
+                    reverseMoney(buyerDiscord, total, "Player item trade negative-balance safeguard", null, null);
+                    first.unlock();
+                    second.unlock();
+                });
+                return;
+            }
+
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!buyer.isOnline() || !seller.isOnline()
                         || count(seller, material) < trade.amount()
@@ -1388,6 +1400,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
 
+            Long remainingBalance = parseBank(debit.body);
+            if (remainingBalance == null || remainingBalance < 0) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    p.sendMessage("§cPurchase cancelled because it would put your balance below $0. Reversing your payment...");
+                    reverseMoney(discordId, money, "Shop purchase negative-balance safeguard", lock, p);
+                });
+                return;
+            }
+
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!p.isOnline() || !canFit(p, finalMaterial, amount)) {
                     p.sendMessage("§cThe item could not be added. Reversing your payment...");
@@ -1411,6 +1432,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 lock.unlock();
             });
         });
+    }
+
+
+    private Long bankBalance(String discordId) {
+        try {
+            HttpResult result = api("GET", userUrl(discordId), null);
+            if (!success(result)) return null;
+            Matcher match = BANK.matcher(result.body);
+            return match.find() ? Long.parseLong(match.group(1)) : null;
+        } catch (Exception e) {
+            getLogger().warning("Could not read UnbelievaBoat bank balance: " + e.getMessage());
+            return null;
+        }
     }
 
     private void reverseMoney(String discordId, long money, String reversalReason,
@@ -1548,6 +1582,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private boolean success(HttpResult result) {
         return result.status >= 200 && result.status < 300;
+    }
+
+    private Long parseBank(String body) {
+        try {
+            Matcher match = BANK.matcher(body == null ? "" : body);
+            return match.find() ? Long.parseLong(match.group(1)) : null;
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private String linkedId(UUID uuid) {
