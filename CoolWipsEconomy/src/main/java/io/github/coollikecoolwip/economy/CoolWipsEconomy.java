@@ -679,7 +679,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final int finalTotalItems = totalItems;
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\"cash\":" + finalPayout + ",\"reason\":\"" +
+                    "{\"bank\":" + finalPayout + ",\"reason\":\"" +
                             json("CoolWips SMP automatic sell chest") + "\"}");
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!success(result)) {
@@ -944,7 +944,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\"cash\":" + finalMoney + ",\"reason\":\"" + json(reason) + "\"}");
+                    "{\"bank\":" + finalMoney + ",\"reason\":\"" + json(reason) + "\"}");
 
             if (!success(result)) {
                 lock.unlock();
@@ -1095,7 +1095,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final long total = trade.total();
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult debit = api("PATCH", userUrl(buyerDiscord),
-                    "{\"cash\":" + (-total) + ",\"reason\":\"Player item trade purchase\"}");
+                    "{\"bank\":" + (-total) + ",\"reason\":\"Player item trade purchase\"}");
 
             if (!success(debit)) {
                 first.unlock();
@@ -1143,7 +1143,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
                     HttpResult credit = api("PATCH", userUrl(sellerDiscord),
-                            "{\"cash\":" + total + ",\"reason\":\"Player item trade sale\"}");
+                            "{\"bank\":" + total + ",\"reason\":\"Player item trade sale\"}");
 
                     if (!success(credit)) {
                         Bukkit.getScheduler().runTask(this, () -> {
@@ -1234,9 +1234,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final Material finalMaterial = material;
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            // UnbelievaBoat treats negative cash as a withdrawal from the user's cash balance.
+            // UnbelievaBoat treats negative bank as a withdrawal from the user's bank balance.
             HttpResult debit = api("PATCH", userUrl(discordId),
-                    "{\"cash\":" + (-money) + ",\"reason\":\"" + json(buyReason) + "\"}");
+                    "{\"bank\":" + (-money) + ",\"reason\":\"" + json(buyReason) + "\"}");
 
             if (!success(debit)) {
                 lock.unlock();
@@ -1274,7 +1274,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                               ReentrantLock lock, Player p) {
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult reverse = api("PATCH", userUrl(discordId),
-                    "{\"cash\":" + money + ",\"reason\":\"" + json(reversalReason) + "\"}");
+                    "{\"bank\":" + money + ",\"reason\":\"" + json(reversalReason) + "\"}");
 
             if (!success(reverse)) {
                 getLogger().severe("Could not reverse $" + money + " for "
@@ -1441,7 +1441,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             if (success(result) && match.find()) {
                 Bukkit.getScheduler().runTask(this, () ->
-                        p.sendMessage("§aUnbelievaBoat cash: §f$" + match.group(1)));
+                        p.sendMessage("§aUnbelievaBoat bank: §f$" + match.group(1)));
             } else {
                 Bukkit.getScheduler().runTask(this, () ->
                         p.sendMessage("§cBalance lookup failed (HTTP " + result.status + ")."));
