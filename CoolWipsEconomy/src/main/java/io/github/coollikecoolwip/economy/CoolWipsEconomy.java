@@ -58,6 +58,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private NamespacedKey sellChestOwnerKey;
     private final Map<String, ReentrantLock> sellChestLocks = new ConcurrentHashMap<>();
     private final Set<String> pendingAutomaticSellChests = ConcurrentHashMap.newKeySet();
+    private final Map<String, Long> automaticSellChestCooldowns = new ConcurrentHashMap<>();
+    private static final long AUTOMATIC_SELL_CHEST_COOLDOWN_TICKS = 20L * 30L;
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -563,9 +565,21 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         String key = info.key();
         if (!pendingAutomaticSellChests.add(key)) return;
 
+        // Wait 30 seconds between automatic payouts for each sell chest.
+        Long lastSell = automaticSellChestCooldowns.get(key);
+        long now = System.currentTimeMillis();
+        if (lastSell != null && now - lastSell < 30_000L) {
+            pendingAutomaticSellChests.remove(key);
+            return;
+        }
+
         // Batch rapid clicks/dragging/hopper transfers into one sell check.
         Bukkit.getScheduler().runTaskLater(this, () -> {
             pendingAutomaticSellChests.remove(key);
+            if (automaticSellChestCooldowns.containsKey(key)
+                    && System.currentTimeMillis() - automaticSellChestCooldowns.get(key) < 30_000L) {
+                return;
+            }
             processAutomaticSellChest(inventory);
         }, 2L);
     }
@@ -630,6 +644,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             lock.unlock();
             return;
         }
+
+        automaticSellChestCooldowns.put(info.key(), System.currentTimeMillis());
 
         final long finalPayout = payout;
         final int finalTotalItems = totalItems;
