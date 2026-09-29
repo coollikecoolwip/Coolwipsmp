@@ -619,7 +619,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         ReentrantLock lock = sellChestLocks.computeIfAbsent(info.key(), k -> new ReentrantLock());
         if (!lock.tryLock()) {
-            scheduleAutomaticSellChest(inventory);
+            String key = info.key();
+            if (scheduledAutomaticSellChestRetries.add(key)) {
+                Bukkit.getScheduler().runTaskLater(this, () -> {
+                    scheduledAutomaticSellChestRetries.remove(key);
+                    scheduleAutomaticSellChest(inventory);
+                }, 10L);
+            }
             return;
         }
 
