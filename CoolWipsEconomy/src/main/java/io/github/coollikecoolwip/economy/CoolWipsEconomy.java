@@ -742,21 +742,24 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         int totalItems = 0;
         BigDecimal gross = BigDecimal.ZERO;
 
+        // Sell up to the same per-transaction item limit used by /sell and /sellall.
+        // Do not reject the entire chest just because it contains more than maxItems.
         for (ItemStack stack : inventory.getContents()) {
             if (stack == null || stack.getType().isAir()) continue;
             BigDecimal unit = prices.get(stack.getType());
             if (unit == null || maintenanceBlocks.contains(stack.getType())) continue;
-            int amount = stack.getAmount();
-            if (totalItems > maxItems - amount) {
-                lock.unlock();
-                return;
-            }
+
+            int remainingCapacity = maxItems - totalItems;
+            if (remainingCapacity <= 0) break;
+
+            int amount = Math.min(stack.getAmount(), remainingCapacity);
             try {
                 gross = gross.add(unit.multiply(BigDecimal.valueOf(amount)));
             } catch (ArithmeticException e) {
                 lock.unlock();
                 return;
             }
+
             totalItems += amount;
             amounts.merge(stack.getType(), amount, Integer::sum);
         }
@@ -772,14 +775,39 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
+        // Remove only the items actually included in this batch.
         List<ItemStack> removed = new ArrayList<>();
+        Map<Material, Integer> remainingToRemove = new HashMap<>(amounts);
         ItemStack[] contents = inventory.getContents();
+
         for (int i = 0; i < contents.length; i++) {
             ItemStack stack = contents[i];
-            if (stack == null || stack.getType().isAir() || !amounts.containsKey(stack.getType())) continue;
-            removed.add(stack.clone());
-            contents[i] = null;
+            if (stack == null || stack.getType().isAir()) continue;
+
+            int remaining = remainingToRemove.getOrDefault(stack.getType(), 0);
+            if (remaining <= 0) continue;
+
+            int take = Math.min(stack.getAmount(), remaining);
+            ItemStack part = stack.clone();
+            part.setAmount(take);
+            removed.add(part);
+
+            if (take == stack.getAmount()) {
+                contents[i] = null;
+            } else {
+                stack.setAmount(stack.getAmount() - take);
+            }
+
+            int left = remaining - take;
+            if (left <= 0) {
+                remainingToRemove.remove(stack.getType());
+            } else {
+                remainingToRemove.put(stack.getType(), left);
+            }
+
+            if (remainingToRemove.isEmpty()) break;
         }
+
         inventory.setContents(contents);
 
         String discordId = linkedId(info.owner());
@@ -814,6 +842,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     online.sendMessage("§aSell chest automatically sold §f" + finalTotalItems + " items §afor §a$" + money(finalPayout) + "§a.");
                 }
                 lock.unlock();
+
+                // If the chest still has sellable items (for example, because it held
+                // more than maxItems), automatically process the remainder after cooldown.
+                Bukkit.getScheduler().runTask(this, () -> scheduleAutomaticSellChest(inventory));
             });
         });
     }
