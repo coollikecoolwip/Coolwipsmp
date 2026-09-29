@@ -1514,33 +1514,44 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
                 for (Map.Entry<UUID, String> entry : accounts.entrySet()) {
                     String discordId = entry.getValue();
-                    Long balance = bankBalance(discordId);
-                    if (balance == null || balance >= 0) continue;
+                    ReentrantLock lock = locks.computeIfAbsent(entry.getKey(), k -> new ReentrantLock());
 
-                    if (balance < Integer.MIN_VALUE) {
-                        getLogger().severe("Negative UnbelievaBoat balance for " + discordId
-                                + " is below the API integer range; automatic repair failed.");
-                        continue;
-                    }
+                    // Never repair a balance while another economy transaction for this
+                    // player is in progress, otherwise a failed purchase could be
+                    // accidentally credited twice.
+                    if (!lock.tryLock()) continue;
 
-                    long repair = -balance;
-                    HttpResult result = api("PATCH", userUrl(discordId),
-                            "{\"bank\":" + repair + ",\"reason\":\"CoolWips SMP negative-balance safeguard\"}");
+                    try {
+                        Long balance = bankBalance(discordId);
+                        if (balance == null || balance >= 0) continue;
 
-                    Long repairedBalance = parseBank(result.body);
-                    if (success(result) && repairedBalance != null && repairedBalance >= 0) {
-                        getLogger().warning("Repaired negative UnbelievaBoat bank balance for "
-                                + discordId + " from $" + balance + " to $" + repairedBalance + ".");
-                        UUID uuid = entry.getKey();
-                        Bukkit.getScheduler().runTask(this, () -> {
-                            Player player = Bukkit.getPlayer(uuid);
-                            if (player != null && player.isOnline()) {
-                                player.sendMessage("§eYour negative economy balance was automatically corrected to $0.");
-                            }
-                        });
-                    } else {
-                        getLogger().severe("Could not repair negative UnbelievaBoat balance for "
-                                + discordId + ". HTTP " + result.status + ".");
+                        if (balance < Integer.MIN_VALUE) {
+                            getLogger().severe("Negative UnbelievaBoat balance for " + discordId
+                                    + " is below the API integer range; automatic repair failed.");
+                            continue;
+                        }
+
+                        long repair = -balance;
+                        HttpResult result = api("PATCH", userUrl(discordId),
+                                "{\"bank\":" + repair + ",\"reason\":\"CoolWips SMP negative-balance safeguard\"}");
+
+                        Long repairedBalance = parseBank(result.body);
+                        if (success(result) && repairedBalance != null && repairedBalance >= 0) {
+                            getLogger().warning("Repaired negative UnbelievaBoat bank balance for "
+                                    + discordId + " from $" + balance + " to $" + repairedBalance + ".");
+                            UUID uuid = entry.getKey();
+                            Bukkit.getScheduler().runTask(this, () -> {
+                                Player player = Bukkit.getPlayer(uuid);
+                                if (player != null && player.isOnline()) {
+                                    player.sendMessage("§eYour negative economy balance was automatically corrected to $0.");
+                                }
+                            });
+                        } else {
+                            getLogger().severe("Could not repair negative UnbelievaBoat balance for "
+                                    + discordId + ". HTTP " + result.status + ".");
+                        }
+                    } finally {
+                        lock.unlock();
                     }
                 }
             });
