@@ -35,7 +35,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter, Listener {
-    private static final Pattern CASH = Pattern.compile("\"cash\"\\s*:\\s*(-?\\d+)");
+    private static final Pattern BANK = Pattern.compile("\"bank\"\\s*:\\s*(-?\\d+)");
     private final Map<Material, Long> prices = new ConcurrentHashMap<>();
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
@@ -1437,7 +1437,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult result = api("GET", userUrl(id), null);
-            Matcher match = CASH.matcher(result.body);
+            Matcher match = BANK.matcher(result.body);
 
             if (success(result) && match.find()) {
                 Bukkit.getScheduler().runTask(this, () ->
