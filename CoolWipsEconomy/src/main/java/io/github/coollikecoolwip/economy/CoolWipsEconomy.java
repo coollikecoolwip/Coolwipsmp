@@ -744,8 +744,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final int finalTotalItems = totalItems;
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\\"cash\\":" + finalPayout + ",\\"reason\\":\\"" +
-                            json("CoolWips SMP automatic sell chest") + "\\"}");
+                    "{\"cash\":" + finalPayout + ",\"reason\":\"" +
+                            json("CoolWips SMP automatic sell chest") + "\"}");
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!success(result)) {
                     restoreChestItems(inventory, removed);
