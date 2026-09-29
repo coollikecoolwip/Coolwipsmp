@@ -642,6 +642,22 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     @EventHandler
+    public void onSellChestInventoryClick(InventoryClickEvent event) {
+        Inventory inventory = event.getInventory();
+        if (!isChestInventory(inventory)) return;
+        if (getSellChestInfo(inventory) == null) return;
+        Bukkit.getScheduler().runTask(this, () -> scheduleAutomaticSellChest(inventory));
+    }
+
+    @EventHandler
+    public void onSellChestInventoryDrag(InventoryDragEvent event) {
+        Inventory inventory = event.getInventory();
+        if (!isChestInventory(inventory)) return;
+        if (getSellChestInfo(inventory) == null) return;
+        Bukkit.getScheduler().runTask(this, () -> scheduleAutomaticSellChest(inventory));
+    }
+
+    @EventHandler
     public void onSellChestClose(org.bukkit.event.inventory.InventoryCloseEvent event) {
         Inventory inventory = event.getInventory();
         if (!isChestInventory(inventory)) return;
