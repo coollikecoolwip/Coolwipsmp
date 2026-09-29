@@ -25,6 +25,8 @@ import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.NamespacedKey;
 import org.bukkit.event.block.Action;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
@@ -36,7 +38,7 @@ import java.util.regex.Pattern;
 
 public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter, Listener {
     private static final Pattern BANK = Pattern.compile("\"bank\"\\s*:\\s*(-?\\d+)");
-    private final Map<Material, Long> prices = new ConcurrentHashMap<>();
+    private final Map<Material, BigDecimal> prices = new ConcurrentHashMap<>();
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
@@ -113,10 +115,28 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         prices.clear();
-        prices.putAll(readConfigPrices("prices"));
+        prices.putAll(readConfigSellPrices("prices"));
 
         shopPrices.clear();
         shopPrices.putAll(readConfigPrices("shop"));
+    }
+
+    private Map<Material, BigDecimal> readConfigSellPrices(String sectionName) {
+        Map<Material, BigDecimal> result = new HashMap<>();
+        var section = getConfig().getConfigurationSection(sectionName);
+        if (section == null) return result;
+
+        for (String key : section.getKeys(false)) {
+            Material m = Material.matchMaterial(key);
+            String raw = getConfig().getString(sectionName + "." + key, "");
+            try {
+                BigDecimal value = new BigDecimal(raw);
+                if (m != null && value.signum() > 0) result.put(m, value);
+            } catch (NumberFormatException ignored) {
+                getLogger().warning("Ignoring invalid sell price in config: " + key);
+            }
+        }
+        return result;
     }
 
     private Map<Material, Long> readConfigPrices(String sectionName) {
@@ -168,7 +188,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void loadRemotePrices() {
-        loadRemoteFile(pricesUrl, "prices.txt", prices);
+        loadRemoteSellFile(pricesUrl, "prices.txt", prices);
     }
 
     private void loadRemoteShop() {
@@ -217,7 +237,85 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
 
-    private Map<Material, Long> parsePrices(String text, String label) {
+    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination) {
+        if (fileUrl.isBlank()) {
+            getLogger().warning("Remote " + label + " URL is blank.");
+            return;
+        }
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                String url = fileUrl + (fileUrl.contains("?") ? "&" : "?")
+                        + "cacheBust=" + System.currentTimeMillis();
+
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .timeout(Duration.ofSeconds(timeout()))
+                        .header("Accept", "text/plain")
+                        .header("Cache-Control", "no-cache")
+                        .GET()
+                        .build();
+
+                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    getLogger().warning("Could not load remote " + label + " (HTTP "
+                            + response.statusCode() + "). Keeping local values.");
+                    return;
+                }
+
+                Map<Material, BigDecimal> loaded = parseSellPrices(response.body(), label);
+                if (loaded.isEmpty()) {
+                    getLogger().warning("Remote " + label + " contained no valid prices. Keeping local values.");
+                    return;
+                }
+
+                destination.clear();
+                destination.putAll(loaded);
+                getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
+            } catch (Exception e) {
+                getLogger().warning("Could not load remote " + label + ": "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            }
+        });
+    }
+
+    private Map<Material, BigDecimal> parseSellPrices(String text, String label) {
+        Map<Material, BigDecimal> loaded = new HashMap<>();
+
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            int separator = line.indexOf('=');
+            if (separator < 0) separator = line.indexOf(':');
+            if (separator <= 0) continue;
+
+            String materialName = line.substring(0, separator).trim()
+                    .toUpperCase(Locale.ROOT)
+                    .replace('-', '_')
+                    .replace(' ', '_');
+
+            try {
+                BigDecimal value = new BigDecimal(line.substring(separator + 1).trim());
+                Material material = Material.matchMaterial(materialName);
+
+                if (material == null) {
+                    getLogger().warning("Ignoring unknown material in " + label + ": " + materialName);
+                    continue;
+                }
+                if (value.signum() <= 0) {
+                    getLogger().warning("Ignoring non-positive price in " + label + ": " + materialName);
+                    continue;
+                }
+
+                loaded.put(material, value);
+            } catch (NumberFormatException e) {
+                getLogger().warning("Ignoring invalid price line in " + label + ": " + rawLine);
+            }
+        }
+
+        return loaded;
+    }
         Map<Material, Long> loaded = new HashMap<>();
 
         for (String rawLine : text.split("\\R")) {
@@ -624,11 +722,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
-        long gross = 0;
+        BigDecimal gross = BigDecimal.ZERO;
 
         for (ItemStack stack : inventory.getContents()) {
             if (stack == null || stack.getType().isAir()) continue;
-            Long unit = prices.get(stack.getType());
+            BigDecimal unit = prices.get(stack.getType());
             if (unit == null || maintenanceBlocks.contains(stack.getType())) continue;
             int amount = stack.getAmount();
             if (totalItems > maxItems - amount) {
@@ -636,7 +734,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
             try {
-                gross = Math.addExact(gross, Math.multiplyExact(unit, amount));
+                gross = gross.add(unit.multiply(BigDecimal.valueOf(amount)));
             } catch (ArithmeticException e) {
                 lock.unlock();
                 return;
@@ -645,7 +743,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             amounts.merge(stack.getType(), amount, Integer::sum);
         }
 
-        if (amounts.isEmpty() || gross > maxMoney) {
+        if (amounts.isEmpty() || gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
             lock.unlock();
             return;
         }
@@ -879,7 +977,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        Long unit = prices.get(material);
+        BigDecimal unit = prices.get(material);
         if (unit == null) {
             p.sendMessage("§cThat item cannot be sold. Use /prices.");
             return;
@@ -893,14 +991,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        long gross;
-        try {
-            gross = Math.multiplyExact(unit, amount);
-        } catch (ArithmeticException e) {
-            p.sendMessage("§cThat sale is too large.");
-            return;
-        }
-        if (gross > maxMoney) {
+        BigDecimal gross = unit.multiply(BigDecimal.valueOf(amount));
+        if (gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
             p.sendMessage("§cThat sale exceeds the $" + money(maxMoney) + " payout limit.");
             return;
         }
@@ -992,9 +1084,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
+        BigDecimal totalValue = unit.multiply(BigDecimal.valueOf(amount));
         long total;
         try {
-            total = Math.multiplyExact(unit, amount);
+            total = totalValue.setScale(0, RoundingMode.HALF_UP).longValueExact();
         } catch (ArithmeticException e) {
             buyer.sendMessage("§cThat trade is too large.");
             return;
@@ -1368,8 +1461,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         p.getInventory().setStorageContents(contents);
     }
 
-    private long afterTax(long gross, double tax) {
-        return Math.max(0, Math.round(gross * (1.0 - tax)));
+    private long afterTax(BigDecimal gross, double tax) {
+        BigDecimal multiplier = BigDecimal.ONE.subtract(BigDecimal.valueOf(tax));
+        return Math.max(0, gross.multiply(multiplier).setScale(0, RoundingMode.HALF_UP).longValue());
     }
 
     private boolean cooldownReady(Player p) {
@@ -1495,9 +1589,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
 
-    private void showPaged(CommandSender sender, Map<Material, Long> map,
+    private void showPaged(CommandSender sender, Map<Material, ?> map,
                            int page, String title, String command) {
-        List<Map.Entry<Material, Long>> list = map.entrySet().stream()
+        List<Map.Entry<Material, ?>> list = map.entrySet().stream()
                 .sorted(Comparator.comparing(e -> e.getKey().name()))
                 .toList();
 
