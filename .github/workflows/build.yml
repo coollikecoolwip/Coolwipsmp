@@ -59,10 +59,27 @@ jobs:
 
       - name: Put plugin JAR in repository
         working-directory: .
+        shell: bash
         run: |
-          JAR="$(find CoolWipsEconomy/target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' | head -n 1)"
-          git rm -f --ignore-unmatch CoolWipsEconomy/CoolWipsEconomy-*.jar
-          cp "$JAR" "CoolWipsEconomy/$(basename "$JAR")"
+          JAR="$(find CoolWipsEconomy/target -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' ! -name '*-sources.jar' ! -name '*-javadoc.jar' | head -n 1)"
+          if [ -z "$JAR" ]; then
+            echo "No built JAR found."
+            exit 1
+          fi
+
+          # Save the verified build outside the git working tree before syncing.
+          cp "$JAR" "$RUNNER_TEMP/CoolWipsEconomy-built.jar"
+
+          # Rebase the publishing workspace to the latest main before creating
+          # the JAR commit. This avoids stale-branch and old-JAR modify/delete conflicts.
+          git fetch origin main
+          git reset --hard origin/main
+          git clean -fd
+          cp "$RUNNER_TEMP/CoolWipsEconomy-built.jar" "CoolWipsEconomy/$(basename "$JAR")"
+
+          # Ensure only the current versioned JAR is present.
+          find CoolWipsEconomy -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' ! -name "$(basename "$JAR")" -delete
+
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add CoolWipsEconomy/*.jar
@@ -70,6 +87,5 @@ jobs:
             echo "JAR is already up to date."
           else
             git commit -m "Update built CoolWips Economy JAR"
-            git pull --rebase origin main
             git push origin HEAD:main
           fi
