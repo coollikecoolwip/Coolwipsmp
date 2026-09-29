@@ -316,42 +316,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         return loaded;
     }
-        Map<Material, Long> loaded = new HashMap<>();
-
-        for (String rawLine : text.split("\\R")) {
-            String line = rawLine.trim();
-            if (line.isEmpty() || line.startsWith("#")) continue;
-
-            int separator = line.indexOf('=');
-            if (separator < 0) separator = line.indexOf(':');
-            if (separator <= 0) continue;
-
-            String materialName = line.substring(0, separator).trim()
-                    .toUpperCase(Locale.ROOT)
-                    .replace('-', '_')
-                    .replace(' ', '_');
-
-            try {
-                long value = Long.parseLong(line.substring(separator + 1).trim());
-                Material material = Material.matchMaterial(materialName);
-
-                if (material == null) {
-                    getLogger().warning("Ignoring unknown material in " + label + ": " + materialName);
-                    continue;
-                }
-                if (value <= 0) {
-                    getLogger().warning("Ignoring non-positive price in " + label + ": " + materialName);
-                    continue;
-                }
-
-                loaded.put(material, value);
-            } catch (NumberFormatException e) {
-                getLogger().warning("Ignoring invalid price line in " + label + ": " + rawLine);
-            }
-        }
-
-        return loaded;
-    }
 
     private String json(String value) {
         return value.replace("\\", "\\\\").replace("\"", "\\\"");
