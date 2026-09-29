@@ -16,7 +16,7 @@
     <dependency><groupId>com.discordsrv</groupId><artifactId>discordsrv</artifactId><version>1.30.5</version><scope>provided</scope></dependency>
   </dependencies>
   <build>
-    <finalName>CoolWipsEconomy-1.0.12</finalName>
+    <finalName>CoolWipsEconomy-1.0.13</finalName>
     <plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version><configuration><release>25</release></configuration></plugin></plugins>
   </build>
 </project>
