@@ -63,6 +63,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Set<String> scheduledAutomaticSellChestRetries = ConcurrentHashMap.newKeySet();
     private static final long AUTOMATIC_SELL_CHEST_COOLDOWN_MS = 30_000L;
 
+    private static final Set<String> UNSAFE_SELL_MATERIALS = Set.of(
+            "BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK",
+            "REPEATING_COMMAND_BLOCK", "STRUCTURE_BLOCK", "STRUCTURE_VOID",
+            "JIGSAW", "SPAWNER", "TRIAL_SPAWNER", "VAULT",
+            "REINFORCED_DEEPSLATE", "END_PORTAL_FRAME", "END_PORTAL",
+            "END_GATEWAY", "LIGHT", "DEBUG_STICK", "KNOWLEDGE_BOOK"
+    );
+
     @Override public void onEnable() {
         saveDefaultConfig();
         loadSettings();
@@ -120,6 +128,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         shopPrices.clear();
         shopPrices.putAll(readConfigPrices("shop"));
+        validateShopPrices();
     }
 
     private Map<Material, BigDecimal> readConfigSellPrices(String sectionName) {
@@ -230,12 +239,31 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 destination.clear();
                 destination.putAll(loaded);
+                validateShopPrices();
                 getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
             }
         });
+    }
+
+    private void validateShopPrices() {
+        if (prices.isEmpty() || shopPrices.isEmpty()) return;
+        List<Material> invalid = new ArrayList<>();
+        for (Map.Entry<Material, Long> entry : shopPrices.entrySet()) {
+            BigDecimal sellPrice = prices.get(entry.getKey());
+            if (sellPrice == null) continue;
+            long sellPayout = afterTax(sellPrice, sellTax);
+            long chargedBuy = Math.max(0, Math.round(entry.getValue() * (1.0 + buyTax)));
+            if (chargedBuy <= sellPayout) {
+                invalid.add(entry.getKey());
+                getLogger().warning("Blocked unsafe shop price for " + entry.getKey()
+                        + ": charged buy $" + chargedBuy
+                        + " would not exceed its post-tax sell payout of $" + sellPayout + ".");
+            }
+        }
+        for (Material material : invalid) shopPrices.remove(material);
     }
 
     private Map<Material, Long> parsePrices(String text, String label) {
@@ -260,6 +288,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 if (material == null) {
                     getLogger().warning("Ignoring unknown material in " + label + ": " + materialName);
+                    continue;
+                }
+                if (UNSAFE_SELL_MATERIALS.contains(materialName) && label.equals("prices.txt")) {
+                    getLogger().warning("Ignoring unsafe survival-inaccessible material in " + label + ": " + materialName);
                     continue;
                 }
                 if (value <= 0) {
@@ -310,6 +342,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 destination.clear();
                 destination.putAll(loaded);
+                validateShopPrices();
                 getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
@@ -340,6 +373,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 if (material == null) {
                     getLogger().warning("Ignoring unknown material in " + label + ": " + materialName);
+                    continue;
+                }
+                if (UNSAFE_SELL_MATERIALS.contains(materialName) && label.equals("prices.txt")) {
+                    getLogger().warning("Ignoring unsafe survival-inaccessible material in " + label + ": " + materialName);
                     continue;
                 }
                 if (value.signum() <= 0) {
@@ -1161,11 +1198,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             buyer.sendMessage("§cThat trade exceeds the $"+money(maxMoney)+" transaction limit.");
             return;
         }
-        if (count(seller, material) < amount) {
+        List<ItemStack> preview = previewItems(seller, material, amount);
+        if (preview.stream().mapToInt(ItemStack::getAmount).sum() != amount) {
             buyer.sendMessage("§c" + seller.getName() + " does not have " + amount + "x " + pretty(material) + ".");
             return;
         }
-        if (!canFit(buyer, material, amount)) {
+        if (!canFitItems(buyer, preview)) {
             buyer.sendMessage("§cYou do not have enough inventory space for that item.");
             return;
         }
@@ -1208,13 +1246,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        if (count(seller, material) < trade.amount()) {
+        List<ItemStack> preview = previewItems(seller, material, trade.amount());
+        if (preview.stream().mapToInt(ItemStack::getAmount).sum() != trade.amount()) {
             removeTrade(trade);
             seller.sendMessage("§cYou no longer have enough of the requested item.");
             buyer.sendMessage("§cThe trade was cancelled because the seller no longer has enough items.");
             return;
         }
-        if (!canFit(buyer, material, trade.amount())) {
+        if (!canFitItems(buyer, preview)) {
             removeTrade(trade);
             seller.sendMessage("§cThe buyer no longer has enough inventory space.");
             buyer.sendMessage("§cThe trade was cancelled because your inventory is full.");
@@ -1254,8 +1293,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Long balance = bankBalance(buyerDiscord);
             if (balance == null) {
-                first.unlock();
-                second.unlock();
+                unlockOnMainThread(first, second);
                 Bukkit.getScheduler().runTask(this, () -> {
                     buyer.sendMessage("§cTrade cancelled. I could not verify the buyer's balance.");
                     seller.sendMessage("§cTrade cancelled because the buyer's balance could not be verified.");
@@ -1263,8 +1301,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
             if (balance < 0 || balance < total) {
-                first.unlock();
-                second.unlock();
+                unlockOnMainThread(first, second);
                 Bukkit.getScheduler().runTask(this, () -> {
                     buyer.sendMessage("§cTrade cancelled. The buyer does not have enough money; their balance cannot go below $0.");
                     seller.sendMessage("§cTrade cancelled because the buyer does not have enough money.");
@@ -1276,8 +1313,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     "{\"bank\":" + (-total) + ",\"reason\":\"Player item trade purchase\"}");
 
             if (!success(debit)) {
-                first.unlock();
-                second.unlock();
+                unlockOnMainThread(first, second);
                 Bukkit.getScheduler().runTask(this, () -> {
                     buyer.sendMessage("§cTrade cancelled. Buyer payment failed (HTTP " + debit.status + ").");
                     seller.sendMessage("§cTrade cancelled because the buyer's payment failed.");
@@ -1290,44 +1326,36 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 Bukkit.getScheduler().runTask(this, () -> {
                     buyer.sendMessage("§cTrade cancelled because it would put your balance below $0. Reversing your payment...");
                     seller.sendMessage("§cTrade cancelled because the buyer's balance would go below $0.");
-                    reverseMoney(buyerDiscord, total, "Player item trade negative-balance safeguard", null, null);
-                    first.unlock();
-                    second.unlock();
+                    reverseMoney(buyerDiscord, total, "Player item trade negative-balance safeguard", null, first, second);
                 });
                 return;
             }
 
             Bukkit.getScheduler().runTask(this, () -> {
+                List<ItemStack> currentItems = previewItems(seller, material, trade.amount());
                 if (!buyer.isOnline() || !seller.isOnline()
-                        || count(seller, material) < trade.amount()
-                        || !canFit(buyer, material, trade.amount())) {
-                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                        || currentItems.stream().mapToInt(ItemStack::getAmount).sum() != trade.amount()
+                        || !canFitItems(buyer, currentItems)) {
+                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
                     buyer.sendMessage("§cTrade cancelled. Conditions changed, so your payment is being reversed.");
                     seller.sendMessage("§cTrade cancelled. Conditions changed, so the payment is being reversed.");
-                    first.unlock();
-                    second.unlock();
                     return;
                 }
 
                 final List<ItemStack> tradedItems = takeItems(seller, material, trade.amount());
                 if (tradedItems.stream().mapToInt(ItemStack::getAmount).sum() != trade.amount()) {
                     restoreItems(seller, tradedItems);
-                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
                     buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
                     seller.sendMessage("§cTrade cancelled because the item transfer could not be completed.");
-                    first.unlock();
-                    second.unlock();
                     return;
                 }
 
-                List<ItemStack> leftovers = giveItems(buyer, tradedItems);
-                if (!leftovers.isEmpty()) {
+                if (!addItemsAtomically(buyer, tradedItems)) {
                     restoreItems(seller, tradedItems);
-                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
+                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
                     buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
                     seller.sendMessage("§cTrade cancelled because the item could not be delivered.");
-                    first.unlock();
-                    second.unlock();
                     return;
                 }
 
@@ -1340,9 +1368,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                             restoreItems(seller, tradedItems);
                             buyer.sendMessage("§cSeller payment failed. Your payment is being reversed.");
                             seller.sendMessage("§cTrade payment failed. The items were returned.");
-                            reverseMoney(buyerDiscord, total, "Player item trade reversal", null, null);
-                            first.unlock();
-                            second.unlock();
+                            reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
                         });
                         return;
                     }
@@ -1426,13 +1452,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Long balance = bankBalance(discordId);
             if (balance == null) {
-                lock.unlock();
+                unlockOnMainThread(lock);
                 Bukkit.getScheduler().runTask(this, () ->
                         p.sendMessage("§cPurchase cancelled. I could not verify your balance."));
                 return;
             }
             if (balance < 0 || balance < money) {
-                lock.unlock();
+                unlockOnMainThread(lock);
                 Bukkit.getScheduler().runTask(this, () ->
                         p.sendMessage("§cPurchase cancelled. You do not have enough money; your balance cannot go below $0."));
                 return;
@@ -1443,7 +1469,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     "{\"bank\":" + (-money) + ",\"reason\":\"" + json(buyReason) + "\"}");
 
             if (!success(debit)) {
-                lock.unlock();
+                unlockOnMainThread(lock);
                 Bukkit.getScheduler().runTask(this, () ->
                         p.sendMessage("§cPurchase cancelled. UnbelievaBoat HTTP " + debit.status + "."));
                 return;
@@ -1453,7 +1479,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (remainingBalance == null || remainingBalance < 0) {
                 Bukkit.getScheduler().runTask(this, () -> {
                     p.sendMessage("§cPurchase cancelled because it would put your balance below $0. Reversing your payment...");
-                    reverseMoney(discordId, money, "Shop purchase negative-balance safeguard", lock, p);
+                    reverseMoney(discordId, money, "Shop purchase negative-balance safeguard", p, lock);
                 });
                 return;
             }
@@ -1461,16 +1487,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!p.isOnline() || !canFit(p, finalMaterial, amount)) {
                     p.sendMessage("§cThe item could not be added. Reversing your payment...");
-                    reverseMoney(discordId, money, "Shop purchase reversal", lock, p);
+                    reverseMoney(discordId, money, "Shop purchase reversal", p, lock);
                     return;
                 }
 
-                Map<Integer, ItemStack> leftovers =
-                        p.getInventory().addItem(new ItemStack(finalMaterial, amount));
-
-                if (!leftovers.isEmpty()) {
+                if (!addItemsAtomically(p, splitStackItems(finalMaterial, amount))) {
                     p.sendMessage("§cThe item could not be added. Reversing your payment...");
-                    reverseMoney(discordId, money, "Shop purchase reversal", lock, p);
+                    reverseMoney(discordId, money, "Shop purchase reversal", p, lock);
                     return;
                 }
 
@@ -1559,7 +1582,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void reverseMoney(String discordId, long money, String reversalReason,
-                              ReentrantLock lock, Player p) {
+                              Player p, ReentrantLock... locksToUnlock) {
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult reverse = api("PATCH", userUrl(discordId),
                     "{\"bank\":" + money + ",\"reason\":\"" + json(reversalReason) + "\"}");
@@ -1569,26 +1592,78 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         + (p == null ? "an economy transaction" : p.getName())
                         + ". UnbelievaBoat HTTP " + reverse.status);
             }
-            if (lock != null) {
-                lock.unlock();
-            }
+            unlockOnMainThread(locksToUnlock);
         });
     }
 
-    private boolean canFit(Player p, Material material, int amount) {
-        int remaining = amount;
-        int maxStack = new ItemStack(material).getMaxStackSize();
+    private void unlockOnMainThread(ReentrantLock... locksToUnlock) {
+        if (locksToUnlock == null || locksToUnlock.length == 0) return;
 
-        for (ItemStack stack : p.getInventory().getStorageContents()) {
-            if (stack == null || stack.getType().isAir()) {
-                remaining -= maxStack;
-            } else if (stack.getType() == material) {
-                remaining -= Math.max(0, maxStack - stack.getAmount());
+        Runnable unlockTask = () -> {
+            for (ReentrantLock lock : locksToUnlock) {
+                if (lock != null && lock.isHeldByCurrentThread()) lock.unlock();
             }
+        };
 
-            if (remaining <= 0) return true;
+        if (Bukkit.isPrimaryThread()) unlockTask.run();
+        else Bukkit.getScheduler().runTask(this, unlockTask);
+    }
+
+    private boolean canFit(Player p, Material material, int amount) {
+        return canFitItems(p, splitStackItems(material, amount));
+    }
+
+    private boolean canFitItems(Player p, List<ItemStack> items) {
+        int size = p.getInventory().getStorageContents().length;
+        Inventory simulation = Bukkit.createInventory(null, size);
+        simulation.setContents(cloneContents(p.getInventory().getStorageContents()));
+
+        for (ItemStack item : items) {
+            if (item == null || item.getType().isAir() || item.getAmount() <= 0) continue;
+            if (!simulation.addItem(item.clone()).isEmpty()) return false;
         }
+        return true;
+    }
 
+    private List<ItemStack> splitStackItems(Material material, int amount) {
+        List<ItemStack> items = new ArrayList<>();
+        int maxStack = new ItemStack(material).getMaxStackSize();
+        int left = amount;
+        while (left > 0) {
+            int take = Math.min(left, maxStack);
+            items.add(new ItemStack(material, take));
+            left -= take;
+        }
+        return items;
+    }
+
+    private List<ItemStack> previewItems(Player p, Material material, int amount) {
+        List<ItemStack> items = new ArrayList<>();
+        int left = amount;
+        for (ItemStack stack : p.getInventory().getStorageContents()) {
+            if (stack == null || stack.getType() != material) continue;
+            int take = Math.min(left, stack.getAmount());
+            ItemStack part = stack.clone();
+            part.setAmount(take);
+            items.add(part);
+            left -= take;
+            if (left <= 0) break;
+        }
+        return items;
+    }
+
+    private ItemStack[] cloneContents(ItemStack[] contents) {
+        ItemStack[] copy = new ItemStack[contents.length];
+        for (int i = 0; i < contents.length; i++) {
+            copy[i] = contents[i] == null ? null : contents[i].clone();
+        }
+        return copy;
+    }
+
+    private boolean addItemsAtomically(Player p, List<ItemStack> items) {
+        ItemStack[] before = cloneContents(p.getInventory().getStorageContents());
+        if (giveItems(p, items).isEmpty()) return true;
+        p.getInventory().setStorageContents(before);
         return false;
     }
 
