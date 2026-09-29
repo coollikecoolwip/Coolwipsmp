@@ -387,10 +387,12 @@ NETHER_QUARTZ_ORE=12
 QUARTZ=14
 QUARTZ_BLOCK=120
 
-ANCIENT_DEBRIS=1100
-NETHERITE_SCRAP=550
-NETHERITE_INGOT=5000
-NETHERITE_BLOCK=45000
+# Netherite convenience money sinks.
+# 4 Ancient Debris -> 4 Netherite Scrap -> 1 Netherite Ingot, so each step remains expensive.
+ANCIENT_DEBRIS=2000
+NETHERITE_SCRAP=2500
+NETHERITE_INGOT=10000
+NETHERITE_BLOCK=90000
 
 # Ore money sinks
 # Buying ore is intentionally expensive so mining remains the cheaper option.
@@ -412,7 +414,5 @@ EMERALD_ORE=7500
 DEEPSLATE_EMERALD_ORE=11000
 NETHER_GOLD_ORE=500
 NETHER_QUARTZ_ORE=600
-ANCIENT_DEBRIS=20000
-
 
 # Keep high-progression items such as diamonds, netherite, ancient debris, and emeralds out of the shop.
