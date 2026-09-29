@@ -807,6 +807,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             try {
                 gross = gross.add(unit.multiply(BigDecimal.valueOf(amount)));
             } catch (ArithmeticException e) {
+                playerLock.unlock();
                 lock.unlock();
                 return;
             }
@@ -816,12 +817,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         if (amounts.isEmpty() || gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
+            playerLock.unlock();
             lock.unlock();
             return;
         }
 
         long payout = afterTax(gross, sellTax);
         if (payout < 1) {
+            playerLock.unlock();
             lock.unlock();
             return;
         }
@@ -864,11 +867,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         String discordId = linkedId(info.owner());
         if (discordId == null) {
             restoreChestItems(inventory, removed);
+            playerLock.unlock();
             lock.unlock();
             return;
         }
-
-        automaticSellChestCooldowns.put(info.key(), System.currentTimeMillis());
 
         final long finalPayout = payout;
         final int finalTotalItems = totalItems;
@@ -879,6 +881,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!success(result)) {
                     restoreChestItems(inventory, removed);
+                    playerLock.unlock();
                     lock.unlock();
                     return;
                 }
@@ -888,10 +891,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     record(new Transaction(info.owner(), Bukkit.getOfflinePlayer(info.owner()).getName(),
                             entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
                 }
+                automaticSellChestCooldowns.put(info.key(), System.currentTimeMillis());
                 Player online = Bukkit.getPlayer(info.owner());
                 if (online != null) {
                     online.sendMessage("§aSell chest automatically sold §f" + finalTotalItems + " items §afor §a$" + money(finalPayout) + "§a.");
                 }
+                playerLock.unlock();
                 lock.unlock();
 
                 // If the chest still has sellable items (for example, because it held
