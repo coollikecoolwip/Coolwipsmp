@@ -776,6 +776,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
+        ReentrantLock playerLock = locks.computeIfAbsent(info.owner(), k -> new ReentrantLock());
+        if (!playerLock.tryLock()) {
+            lock.unlock();
+            String key = info.key();
+            if (scheduledAutomaticSellChestRetries.add(key)) {
+                Bukkit.getScheduler().runTaskLater(this, () -> {
+                    scheduledAutomaticSellChestRetries.remove(key);
+                    scheduleAutomaticSellChest(inventory);
+                }, 10L);
+            }
+            return;
+        }
+
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
         BigDecimal gross = BigDecimal.ZERO;
