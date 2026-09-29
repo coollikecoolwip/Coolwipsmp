@@ -13,6 +13,9 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.inventory.InventoryCloseEvent;
+import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -653,6 +656,112 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 player.sendMessage("§aSell chest sold §f" + finalTotalItems + " items §afor §a$"
                         + money(finalPayout) + "§a.");
+                lock.unlock();
+            });
+        });
+    }
+
+    @EventHandler
+    public void onSellChestClick(InventoryClickEvent event) {
+        Inventory inventory = event.getView().getTopInventory();
+        if (getSellChestInfo(inventory) == null) return;
+        Bukkit.getScheduler().runTask(this, () -> processAutomaticSellChest(inventory));
+    }
+
+    @EventHandler
+    public void onSellChestDrag(InventoryDragEvent event) {
+        Inventory inventory = event.getView().getTopInventory();
+        if (getSellChestInfo(inventory) == null) return;
+        Bukkit.getScheduler().runTask(this, () -> processAutomaticSellChest(inventory));
+    }
+
+    @EventHandler
+    public void onSellChestMove(InventoryMoveItemEvent event) {
+        Inventory destination = event.getDestination();
+        if (getSellChestInfo(destination) == null) return;
+        Bukkit.getScheduler().runTask(this, () -> processAutomaticSellChest(destination));
+    }
+
+    private void processAutomaticSellChest(Inventory inventory) {
+        SellChestInfo info = getSellChestInfo(inventory);
+        if (info == null || sellsDisabled) return;
+
+        ReentrantLock lock = sellChestLocks.computeIfAbsent(info.key(), k -> new ReentrantLock());
+        if (!lock.tryLock()) return;
+
+        Map<Material, Integer> amounts = new LinkedHashMap<>();
+        int totalItems = 0;
+        long gross = 0;
+
+        for (ItemStack stack : inventory.getContents()) {
+            if (stack == null || stack.getType().isAir()) continue;
+            Long unit = prices.get(stack.getType());
+            if (unit == null || maintenanceBlocks.contains(stack.getType())) continue;
+            int amount = stack.getAmount();
+            if (totalItems > maxItems - amount) {
+                lock.unlock();
+                return;
+            }
+            try {
+                gross = Math.addExact(gross, Math.multiplyExact(unit, amount));
+            } catch (ArithmeticException e) {
+                lock.unlock();
+                return;
+            }
+            totalItems += amount;
+            amounts.merge(stack.getType(), amount, Integer::sum);
+        }
+
+        if (amounts.isEmpty() || gross > maxMoney) {
+            lock.unlock();
+            return;
+        }
+
+        long payout = afterTax(gross, sellTax);
+        if (payout < 1) {
+            lock.unlock();
+            return;
+        }
+
+        List<ItemStack> removed = new ArrayList<>();
+        ItemStack[] contents = inventory.getContents();
+        for (int i = 0; i < contents.length; i++) {
+            ItemStack stack = contents[i];
+            if (stack == null || stack.getType().isAir() || !amounts.containsKey(stack.getType())) continue;
+            removed.add(stack.clone());
+            contents[i] = null;
+        }
+        inventory.setContents(contents);
+
+        String discordId = Bukkit.getOfflinePlayer(info.owner()).getName() == null ? null : linkedId(info.owner());
+        if (discordId == null) {
+            restoreChestItems(inventory, removed);
+            lock.unlock();
+            return;
+        }
+
+        final long finalPayout = payout;
+        final int finalTotalItems = totalItems;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            HttpResult result = api("PATCH", userUrl(discordId),
+                    "{\\"cash\\":" + finalPayout + ",\\"reason\\":\\"" +
+                            json("CoolWips SMP automatic sell chest") + "\\"}");
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!success(result)) {
+                    restoreChestItems(inventory, removed);
+                    lock.unlock();
+                    return;
+                }
+                for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
+                    long itemGross = (long) entry.getValue() * prices.get(entry.getKey());
+                    long itemPayout = afterTax(itemGross, sellTax);
+                    record(new Transaction(info.owner(), Bukkit.getOfflinePlayer(info.owner()).getName(),
+                            entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
+                }
+                Player online = Bukkit.getPlayer(info.owner());
+                if (online != null) {
+                    online.sendMessage("§aSell chest automatically sold §f" + finalTotalItems + " items §afor §a$" + money(finalPayout) + "§a.");
+                }
                 lock.unlock();
             });
         });
