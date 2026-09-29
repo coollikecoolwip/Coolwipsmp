@@ -57,6 +57,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private double sellTax, buyTax;
     private NamespacedKey sellChestOwnerKey;
     private final Map<String, ReentrantLock> sellChestLocks = new ConcurrentHashMap<>();
+    private final Set<String> pendingAutomaticSellChests = ConcurrentHashMap.newKeySet();
 
     @Override public void onEnable() {
         saveDefaultConfig();
@@ -539,147 +540,34 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     @EventHandler
-    public void onSellChestClose(InventoryCloseEvent event) {
-        if (!(event.getPlayer() instanceof Player player)) return;
-
-        SellChestInfo info = getSellChestInfo(event.getInventory());
-        if (info == null || !info.owner().equals(player.getUniqueId())) return;
-
-        ReentrantLock lock = sellChestLocks.computeIfAbsent(info.key(), k -> new ReentrantLock());
-        if (!lock.tryLock()) {
-            player.sendMessage("§eThis sell chest is already processing.");
-            return;
-        }
-
-        if (sellsDisabled) {
-            lock.unlock();
-            player.sendMessage("§cSelling is currently disabled for maintenance.");
-            return;
-        }
-
-        Inventory inventory = event.getInventory();
-        Map<Material, Integer> amounts = new LinkedHashMap<>();
-        int totalItems = 0;
-        long gross = 0;
-
-        for (ItemStack stack : inventory.getContents()) {
-            if (stack == null || stack.getType().isAir()) continue;
-            Material material = stack.getType();
-            Long unit = prices.get(material);
-            if (unit == null || maintenanceBlocks.contains(material)) continue;
-
-            int amount = stack.getAmount();
-            if (totalItems > maxItems - amount) {
-                lock.unlock();
-                player.sendMessage("§cThis sell chest contains more than " + maxItems
-                        + " sellable items. Remove some items and close it again.");
-                return;
-            }
-
-            long value;
-            try {
-                value = Math.multiplyExact(unit, amount);
-                gross = Math.addExact(gross, value);
-            } catch (ArithmeticException e) {
-                lock.unlock();
-                player.sendMessage("§cThe sell chest value is too large.");
-                return;
-            }
-
-            totalItems += amount;
-            amounts.merge(material, amount, Integer::sum);
-        }
-
-        if (amounts.isEmpty()) {
-            lock.unlock();
-            return;
-        }
-
-        if (gross > maxMoney) {
-            lock.unlock();
-            player.sendMessage("§cThis sell chest exceeds the $" + money(maxMoney)
-                    + " payout limit. Remove some items.");
-            return;
-        }
-
-        long payout = afterTax(gross, sellTax);
-        if (payout < 1) {
-            lock.unlock();
-            player.sendMessage("§cThe sell chest value after tax is less than $1.");
-            return;
-        }
-
-        List<ItemStack> removed = new ArrayList<>();
-        ItemStack[] contents = inventory.getContents();
-
-        for (int i = 0; i < contents.length; i++) {
-            ItemStack stack = contents[i];
-            if (stack == null || stack.getType().isAir()) continue;
-            if (!amounts.containsKey(stack.getType())) continue;
-
-            removed.add(stack.clone());
-            contents[i] = null;
-        }
-        inventory.setContents(contents);
-
-        String discordId = linkedId(player);
-        if (discordId == null) {
-            restoreChestItems(inventory, removed);
-            lock.unlock();
-            return;
-        }
-
-        final long finalPayout = payout;
-        final int finalTotalItems = totalItems;
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\"cash\":" + finalPayout + ",\"reason\":\""
-                            + json("CoolWips SMP sell chest") + "\"}");
-
-            if (!success(result)) {
-                Bukkit.getScheduler().runTask(this, () -> {
-                    restoreChestItems(inventory, removed);
-                    player.sendMessage("§cSell chest payout failed. Your items were returned. UnbelievaBoat HTTP "
-                            + result.status + ".");
-                    lock.unlock();
-                });
-                return;
-            }
-
-            Bukkit.getScheduler().runTask(this, () -> {
-                for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
-                    long itemGross = (long) entry.getValue() * prices.get(entry.getKey());
-                    long itemPayout = afterTax(itemGross, sellTax);
-                    record(new Transaction(player.getUniqueId(), player.getName(), entry.getKey().name(),
-                            entry.getValue(), itemPayout, false, new java.util.Date().toString()));
-                }
-
-                player.sendMessage("§aSell chest sold §f" + finalTotalItems + " items §afor §a$"
-                        + money(finalPayout) + "§a.");
-                lock.unlock();
-            });
-        });
-    }
-
-    @EventHandler
     public void onSellChestClick(InventoryClickEvent event) {
         Inventory inventory = event.getView().getTopInventory();
-        if (getSellChestInfo(inventory) == null) return;
-        Bukkit.getScheduler().runTask(this, () -> processAutomaticSellChest(inventory));
+        scheduleAutomaticSellChest(inventory);
     }
 
     @EventHandler
     public void onSellChestDrag(InventoryDragEvent event) {
         Inventory inventory = event.getView().getTopInventory();
-        if (getSellChestInfo(inventory) == null) return;
-        Bukkit.getScheduler().runTask(this, () -> processAutomaticSellChest(inventory));
+        scheduleAutomaticSellChest(inventory);
     }
 
     @EventHandler
     public void onSellChestMove(InventoryMoveItemEvent event) {
-        Inventory destination = event.getDestination();
-        if (getSellChestInfo(destination) == null) return;
-        Bukkit.getScheduler().runTask(this, () -> processAutomaticSellChest(destination));
+        scheduleAutomaticSellChest(event.getDestination());
+    }
+
+    private void scheduleAutomaticSellChest(Inventory inventory) {
+        SellChestInfo info = getSellChestInfo(inventory);
+        if (info == null) return;
+
+        String key = info.key();
+        if (!pendingAutomaticSellChests.add(key)) return;
+
+        // Batch rapid clicks/dragging/hopper transfers into one sell check.
+        Bukkit.getScheduler().runTaskLater(this, () -> {
+            pendingAutomaticSellChests.remove(key);
+            processAutomaticSellChest(inventory);
+        }, 2L);
     }
 
     private void processAutomaticSellChest(Inventory inventory) {
@@ -687,7 +575,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (info == null || sellsDisabled) return;
 
         ReentrantLock lock = sellChestLocks.computeIfAbsent(info.key(), k -> new ReentrantLock());
-        if (!lock.tryLock()) return;
+        if (!lock.tryLock()) {
+            scheduleAutomaticSellChest(inventory);
+            return;
+        }
 
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
