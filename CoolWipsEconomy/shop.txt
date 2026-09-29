@@ -343,4 +343,7 @@ IRON_HOE=750
 FLINT_AND_STEEL=500
 SHEARS=500
 
+# High-value money sinks
+TOTEM_OF_UNDYING=1000
+
 # Keep high-progression items such as diamonds, netherite, ancient debris, and emeralds out of the shop.
