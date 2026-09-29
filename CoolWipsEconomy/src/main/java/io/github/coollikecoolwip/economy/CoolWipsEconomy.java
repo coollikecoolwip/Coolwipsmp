@@ -1083,30 +1083,44 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final int finalAmount = amount;
         final long finalMoney = payout;
         final Material finalMaterial = material;
+        final Location returnLocation = p.getLocation().clone();
+
+        // Remove the items before issuing the money credit. This prevents a crash or
+        // transaction race from ever creating money without consuming the items.
+        List<ItemStack> removed = takeItems(p, finalMaterial, finalAmount);
+        if (removed.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
+            restoreItems(p, removed);
+            lock.unlock();
+            p.sendMessage("§cSale cancelled because the item transfer could not be completed.");
+            return;
+        }
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             HttpResult result = api("PATCH", userUrl(discordId),
                     "{\"bank\":" + finalMoney + ",\"reason\":\"" + json(reason) + "\"}");
 
-            if (!success(result)) {
-                lock.unlock();
-                Bukkit.getScheduler().runTask(this, () ->
-                        p.sendMessage("§cSale cancelled. UnbelievaBoat HTTP " + result.status + "."));
-                return;
-            }
-
             Bukkit.getScheduler().runTask(this, () -> {
-                if (!p.isOnline() || count(p, finalMaterial) < finalAmount) {
-                    reverseMoney(discordId, finalMoney, "Sale reversal", lock, p);
-                    p.sendMessage("§cItems were no longer available. Reversing payment...");
+                if (!success(result)) {
+                    if (p.isOnline()) {
+                        restoreItems(p, removed);
+                    } else if (returnLocation.getWorld() != null) {
+                        for (ItemStack item : removed) {
+                            returnLocation.getWorld().dropItemNaturally(returnLocation, item);
+                        }
+                    }
+                    lock.unlock();
+                    if (p.isOnline()) {
+                        p.sendMessage("§cSale cancelled. UnbelievaBoat HTTP " + result.status + ". Your items were returned.");
+                    }
                     return;
                 }
 
-                remove(p, finalMaterial, finalAmount);
                 record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
                         finalAmount, finalMoney, false, new java.util.Date().toString()));
-                p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
-                        + " §afor §a$" + money(finalMoney) + "§a.");
+                if (p.isOnline()) {
+                    p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
+                            + " §afor §a$" + money(finalMoney) + "§a.");
+                }
                 lock.unlock();
             });
         });
