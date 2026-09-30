@@ -24,6 +24,8 @@ settings:
   market-price-drop: 0.10
   market-min-price: 90
   market-moss-min-price: 0.017
+  # Market prices use the day's highest observed sold volume, so rollbacks cannot raise prices.
+
 prices:
   DIAMOND: 250
   IRON_INGOT: 25
