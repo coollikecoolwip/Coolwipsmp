@@ -27,8 +27,10 @@ settings:
   market-moss-min-price: 0.017
   market-rules-version: 6
   # Economy monitoring only; these thresholds log a flag but never block a player.
+  ledger-max-entries: 20000
   anomaly:
     player-money-created-limit: 2500000
+    player-money-transferred-limit: 5000000
     player-items-sold-limit: 250000
     single-sale-limit: 500000
   # Market prices use the day's highest observed sold volume, so rollbacks cannot raise prices.
