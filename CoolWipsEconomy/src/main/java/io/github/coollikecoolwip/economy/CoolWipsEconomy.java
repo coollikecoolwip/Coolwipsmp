@@ -1903,6 +1903,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
 
             Bukkit.getScheduler().runTask(this, () -> {
+                Bukkit.getScheduler().runTaskAsynchronously(this, () ->
+                        recordEconomyMoneyOnly(killer.getUniqueId(), killer.getName(), payout,
+                                "BOUNTY_REWARD", true));
                 killer.sendMessage("§6§lBOUNTY CLAIMED §e+$" + money(payout) + " §7for killing §f" + targetName + "§7.");
                 Bukkit.broadcastMessage("§6§lBOUNTY §f" + killer.getName() + " §7claimed a §a$" +
                         money(payout) + " §7bounty on §f" + targetName + "§7.");
@@ -2794,6 +2797,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 }
 
                 Bukkit.getScheduler().runTask(this, () -> {
+                    Bukkit.getScheduler().runTaskAsynchronously(this, () ->
+                            recordEconomyTransfer(sender.getUniqueId(), sender.getName(),
+                                    recipient.getUniqueId(), recipient.getName(),
+                                    finalAmount, "PLAYER_PAY"));
                     sender.sendMessage("§aSent §f$" + money(finalAmount) + " §ato §f" + recipient.getName() + "§a.");
                     recipient.sendMessage("§aReceived §f$" + money(finalAmount) + " §afrom §f" + sender.getName() + "§a.");
                     first.unlock();
@@ -2896,6 +2903,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         return;
                     }
 
+                    Bukkit.getScheduler().runTaskAsynchronously(this, () ->
+                            recordEconomyMoneyOnly(poster.getUniqueId(), poster.getName(), finalAmount,
+                                    "BOUNTY_ESCROW", false));
                     poster.sendMessage("§aBounty of §f$" + money(finalAmount) + " §aplaced on §f" +
                             finalTargetName + "§a. Total bounty: §e$" + money(newTotal) + "§a.");
                     target.sendMessage("§cA §6$" + money(finalAmount) + " §cbounty was placed on you. Total bounty: §6$" +
@@ -3152,6 +3162,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     }
 
                     Bukkit.getScheduler().runTask(this, () -> {
+                        Bukkit.getScheduler().runTaskAsynchronously(this, () ->
+                                recordEconomyTransfer(buyer.getUniqueId(), buyer.getName(),
+                                        seller.getUniqueId(), seller.getName(),
+                                        total, "PLAYER_ITEM_TRADE"));
                         record(new Transaction(buyer.getUniqueId(), buyer.getName(), material.name(),
                                 trade.amount(), total, true, new java.util.Date().toString()));
                         record(new Transaction(seller.getUniqueId(), seller.getName(), material.name(),
