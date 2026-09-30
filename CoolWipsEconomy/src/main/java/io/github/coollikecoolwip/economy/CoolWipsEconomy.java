@@ -135,6 +135,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private long marketStepUnits;
     private BigDecimal marketDropPercent;
     private BigDecimal marketMinPrice;
+    private BigDecimal marketMossMinPrice;
 
     private record MarketSale(Material material, int amount, BigDecimal gross, boolean marketTracked) {}
 
@@ -382,8 +383,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         BigDecimal multiplier = BigDecimal.ONE.subtract(marketDropPercent)
                 .pow((int) Math.min(steps, 1000L));
         BigDecimal price = base.multiply(multiplier);
-        if (base.compareTo(marketMinPrice) > 0 && price.compareTo(marketMinPrice) < 0) {
-            price = marketMinPrice;
+        BigDecimal floor = material == Material.MOSS_BLOCK ? marketMossMinPrice : marketMinPrice;
+        if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) {
+            price = floor;
         }
         return price;
     }
