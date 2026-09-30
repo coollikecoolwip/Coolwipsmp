@@ -329,6 +329,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
             String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             Map<Material, MarketRule> loaded = parseMarketRules(text, "bundled market.txt");
+            marketRules.clear();
             if (!loaded.isEmpty()) {
                 marketRules.putAll(loaded);
             }
