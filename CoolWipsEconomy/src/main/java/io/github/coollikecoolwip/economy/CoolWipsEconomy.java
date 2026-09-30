@@ -19,6 +19,10 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.Recipe;
+import org.bukkit.inventory.RecipeIterator;
+import org.bukkit.inventory.ShapedRecipe;
+import org.bukkit.inventory.ShapelessRecipe;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.persistence.PersistentDataType;
@@ -133,6 +137,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final ReentrantLock marketLock = new ReentrantLock();
     private File marketFile;
     private YamlConfiguration marketData;
+    private File economyStatsFile;
+    private YamlConfiguration economyStatsData;
+    private LocalDate economyStatsDay;
+    private final ReentrantLock economyStatsLock = new ReentrantLock();
+    private long anomalyPlayerMoneyCreatedLimit;
+    private long anomalyPlayerItemsSoldLimit;
+    private long anomalySingleSaleLimit;
     private String marketDay;
     private long marketFreeUnits;
     private long marketStepUnits;
@@ -163,6 +174,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
         loadBundledMarketRules();
         loadMarketLedger();
+        loadEconomyStats();
         Bukkit.getPluginManager().registerEvents(this, this);
 
         for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
@@ -185,6 +197,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     @Override public void onDisable() {
         saveMarketLedger();
+        saveEconomyStats();
     }
 
     private void loadSettings() {
@@ -223,6 +236,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         marketMossMinPrice = parseDecimalSetting("settings.market-moss-min-price", new BigDecimal("0.017"))
                 .max(BigDecimal.ZERO);
         marketRulesVersion = Math.max(1, getConfig().getInt("settings.market-rules-version", 2));
+        anomalyPlayerMoneyCreatedLimit = Math.max(1L, getConfig().getLong("settings.anomaly.player-money-created-limit", 2500000L));
+        anomalyPlayerItemsSoldLimit = Math.max(1L, getConfig().getLong("settings.anomaly.player-items-sold-limit", 250000L));
+        anomalySingleSaleLimit = Math.max(1L, getConfig().getLong("settings.anomaly.single-sale-limit", 500000L));
         defaultMarketRule = new MarketRule(
                 marketFreeUnits,
                 marketStepUnits,
@@ -242,6 +258,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         shopPrices.clear();
         shopPrices.putAll(readConfigPrices("shop"));
+        validateCraftingEconomy();
         validateShopPrices();
         loadBounties();
     }
