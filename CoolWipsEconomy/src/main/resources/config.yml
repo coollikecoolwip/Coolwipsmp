@@ -2,6 +2,7 @@ api-token: "PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE"
 guild-id: "1025178490481418280"
 prices-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt"
 shop-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt"
+market-rules-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/src/main/resources/market.txt"
 api:
   base-url: "https://unbelievaboat.com/api/v1"
   timeout-seconds: 15
@@ -20,10 +21,11 @@ settings:
   # Renewable items keep full value for normal volumes. Heavy daily volume lowers
   # that specific item's sell price until it reaches the configured floor.
   market-full-price-units: 2048
-  market-step-units: 2048
-  market-price-drop: 0.10
-  market-min-price: 90
+  market-step-units: 512
+  market-price-drop: 0.90
+  market-min-price: 0.0001
   market-moss-min-price: 0.017
+  market-rules-version: 3
   # Market prices use the day's highest observed sold volume, so rollbacks cannot raise prices.
 
 prices:
