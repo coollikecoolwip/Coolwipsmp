@@ -74,11 +74,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // Dynamic market for renewable/farm outputs: normal volumes keep full value,
     // heavy volume lowers only that item's sell price until the configured floor.
     private static final long DEFAULT_MARKET_FREE_UNITS = 2048L;
-    private static final long DEFAULT_MARKET_STEP_UNITS = 2048L;
-    private static final BigDecimal DEFAULT_MARKET_DROP_PERCENT = new BigDecimal("0.10");
-    private static final BigDecimal DEFAULT_MARKET_MIN_PRICE = new BigDecimal("90");
+    private static final long DEFAULT_MARKET_STEP_UNITS = 512L;
+    private static final BigDecimal DEFAULT_MARKET_DROP_PERCENT = new BigDecimal("0.65");
+    private static final BigDecimal DEFAULT_MARKET_MIN_PRICE = new BigDecimal("0.017");
 
     private static final Set<Material> FARM_INCOME_MATERIALS = EnumSet.of(
+            Material.IRON_INGOT, Material.GOLD_INGOT, Material.REDSTONE, Material.LAPIS_LAZULI, Material.EMERALD, Material.COPPER_INGOT,
             Material.WHEAT, Material.WHEAT_SEEDS, Material.CARROT, Material.POTATO, Material.BEETROOT,
             Material.MELON_SLICE, Material.MELON, Material.PUMPKIN, Material.SUGAR_CANE, Material.BAMBOO,
             Material.BAMBOO_BLOCK, Material.CACTUS, Material.COCOA_BEANS, Material.NETHER_WART,
@@ -97,7 +98,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Material.ENDER_PEARL, Material.BLAZE_ROD, Material.SLIME_BALL, Material.MAGMA_CREAM,
             Material.GHAST_TEAR, Material.PHANTOM_MEMBRANE, Material.INK_SAC, Material.GLOW_INK_SAC,
             Material.RABBIT_FOOT, Material.PRISMARINE_SHARD, Material.PRISMARINE_CRYSTALS,
-            Material.NAUTILUS_SHELL, Material.HONEYCOMB, Material.HONEY_BOTTLE, Material.HONEY_BLOCK,
+            Material.NAUTILUS_SHELL, Material.SHULKER_SHELL, Material.WITHER_SKELETON_SKULL, Material.DRAGON_BREATH,
+            Material.HONEYCOMB, Material.HONEY_BOTTLE, Material.HONEY_BLOCK,
             Material.HONEYCOMB_BLOCK,
             Material.MOSS_BLOCK, Material.MOSS_CARPET, Material.AZALEA, Material.FLOWERING_AZALEA,
             Material.AZALEA_LEAVES, Material.FLOWERING_AZALEA_LEAVES, Material.PINK_PETALS,
@@ -138,6 +140,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketMinPrice;
     private BigDecimal marketMossMinPrice;
     private int marketRulesVersion;
+    private long marketRulesFingerprint;
     private final Map<Material, MarketRule> marketRules = new ConcurrentHashMap<>();
     private MarketRule defaultMarketRule;
 
@@ -326,6 +329,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
             String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            marketRulesFingerprint = fingerprintMarketRules(text);
             Map<Material, MarketRule> loaded = parseMarketRules(text, "bundled market.txt");
             marketRules.clear();
             if (!loaded.isEmpty()) {
@@ -350,13 +354,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             marketDay = LocalDate.now(ZoneId.systemDefault()).toString();
 
             int storedRulesVersion = marketData.getInt("rules_version", -1);
-            if (storedRulesVersion != marketRulesVersion) {
+            long storedRulesFingerprint = marketData.getLong("rules_fingerprint", Long.MIN_VALUE);
+            if (storedRulesVersion != marketRulesVersion || storedRulesFingerprint != marketRulesFingerprint) {
                 marketSoldToday.clear();
                 marketPeakSoldToday.clear();
                 marketData.set("sold", null);
                 marketData.set("peak_sold", null);
                 marketData.set("day", marketDay);
                 marketData.set("rules_version", marketRulesVersion);
+                marketData.set("rules_fingerprint", marketRulesFingerprint);
                 saveMarketLedgerLocked();
                 getLogger().info("Market rules version changed to " + marketRulesVersion
                         + "; resetting today's market volume.");
@@ -420,6 +426,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (marketFile == null || marketData == null) return;
         marketData.set("day", marketDay);
         marketData.set("rules_version", marketRulesVersion);
+        marketData.set("rules_fingerprint", marketRulesFingerprint);
         marketData.set("sold", null);
         marketData.set("peak_sold", null);
         for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
@@ -656,11 +663,33 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 }
 
                 Map<Material, MarketRule> loaded = parseMarketRules(response.body(), "market.txt");
+                long fingerprint = fingerprintMarketRules(response.body());
                 Bukkit.getScheduler().runTask(this, () -> {
                     if (!loaded.isEmpty()) {
-                        marketRules.clear();
-                        marketRules.putAll(loaded);
-                        getLogger().info("Loaded " + marketRules.size() + " market rules from GitHub.");
+                        marketLock.lock();
+                        try {
+                            marketRules.clear();
+                            marketRules.putAll(loaded);
+                            if (fingerprint != marketRulesFingerprint && marketData != null) {
+                                marketSoldToday.clear();
+                                marketPeakSoldToday.clear();
+                                marketRulesFingerprint = fingerprint;
+                                marketData.set("sold", null);
+                                marketData.set("peak_sold", null);
+                                marketData.set("day", marketDay);
+                                marketData.set("rules_version", marketRulesVersion);
+                                marketData.set("rules_fingerprint", marketRulesFingerprint);
+                                saveMarketLedgerLocked();
+                                getLogger().info("Remote market rules changed; resetting today's market volume.");
+                            } else {
+                                marketRulesFingerprint = fingerprint;
+                                marketData.set("rules_fingerprint", marketRulesFingerprint);
+                                saveMarketLedgerLocked();
+                            }
+                            getLogger().info("Loaded " + marketRules.size() + " market rules from GitHub.");
+                        } finally {
+                            marketLock.unlock();
+                        }
                     }
                 });
             } catch (Exception e) {
@@ -668,6 +697,20 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
             }
         });
+    }
+
+    private long fingerprintMarketRules(String text) {
+        long hash = 1125899906842597L;
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                if (!Character.isWhitespace(c)) hash = 31L * hash + c;
+            }
+            hash = 31L * hash + 10L;
+        }
+        return hash;
     }
 
     private Map<Material, MarketRule> parseMarketRules(String text, String label) {
