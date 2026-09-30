@@ -674,6 +674,219 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void loadEconomyStats() {
+        economyStatsLock.lock();
+        try {
+            if (!getDataFolder().exists()) getDataFolder().mkdirs();
+            economyStatsFile = new File(getDataFolder(), "economy-stats.yml");
+            economyStatsData = YamlConfiguration.loadConfiguration(economyStatsFile);
+            String today = LocalDate.now(ZoneId.systemDefault()).toString();
+            if (!today.equals(economyStatsData.getString("day", ""))) {
+                economyStatsData.set("day", today);
+                economyStatsData.set("money_created", 0L);
+                economyStatsData.set("money_removed", 0L);
+                economyStatsData.set("items_sold", 0L);
+                economyStatsData.set("items_bought", 0L);
+                economyStatsData.set("created_by_item", null);
+                economyStatsData.set("removed_by_item", null);
+                economyStatsData.set("sources", null);
+                economyStatsData.set("sinks", null);
+                economyStatsData.set("players", null);
+                economyStatsData.set("flags", null);
+                saveEconomyStatsLocked();
+            }
+            economyStatsDay = LocalDate.parse(today);
+        } finally {
+            economyStatsLock.unlock();
+        }
+    }
+
+    private void saveEconomyStats() {
+        economyStatsLock.lock();
+        try {
+            saveEconomyStatsLocked();
+        } finally {
+            economyStatsLock.unlock();
+        }
+    }
+
+    private void saveEconomyStatsLocked() {
+        if (economyStatsFile == null || economyStatsData == null) return;
+        economyStatsData.set("day", economyStatsDay == null
+                ? LocalDate.now(ZoneId.systemDefault()).toString() : economyStatsDay.toString());
+        try {
+            economyStatsData.save(economyStatsFile);
+        } catch (IOException e) {
+            getLogger().warning("Could not save economy stats: " + e.getMessage());
+        }
+    }
+
+    private long statAdd(long current, long amount) {
+        if (amount <= 0) return current;
+        return current > Long.MAX_VALUE - amount ? Long.MAX_VALUE : current + amount;
+    }
+
+    private void recordEconomyCreated(UUID uuid, String playerName, Material material, int amount, long money, String source) {
+        recordEconomyFlow(uuid, playerName, material, amount, money, source, true);
+    }
+
+    private void recordEconomyRemoved(UUID uuid, String playerName, Material material, int amount, long money, String sink) {
+        recordEconomyFlow(uuid, playerName, material, amount, money, sink, false);
+    }
+
+    private void recordEconomyFlow(UUID uuid, String playerName, Material material, int amount, long money,
+                                    String category, boolean created) {
+        if (uuid == null || material == null || money <= 0) return;
+        economyStatsLock.lock();
+        try {
+            String prefix = "players." + uuid;
+            if (created) {
+                economyStatsData.set("money_created",
+                        statAdd(economyStatsData.getLong("money_created", 0L), money));
+                economyStatsData.set("items_sold",
+                        statAdd(economyStatsData.getLong("items_sold", 0L), amount));
+                economyStatsData.set("created_by_item." + material.name(),
+                        statAdd(economyStatsData.getLong("created_by_item." + material.name(), 0L), money));
+                economyStatsData.set("sources." + category,
+                        statAdd(economyStatsData.getLong("sources." + category, 0L), money));
+                economyStatsData.set(prefix + ".created",
+                        statAdd(economyStatsData.getLong(prefix + ".created", 0L), money));
+                economyStatsData.set(prefix + ".sold",
+                        statAdd(economyStatsData.getLong(prefix + ".sold", 0L), amount));
+            } else {
+                economyStatsData.set("money_removed",
+                        statAdd(economyStatsData.getLong("money_removed", 0L), money));
+                economyStatsData.set("items_bought",
+                        statAdd(economyStatsData.getLong("items_bought", 0L), amount));
+                economyStatsData.set("removed_by_item." + material.name(),
+                        statAdd(economyStatsData.getLong("removed_by_item." + material.name(), 0L), money));
+                economyStatsData.set("sinks." + category,
+                        statAdd(economyStatsData.getLong("sinks." + category, 0L), money));
+                economyStatsData.set(prefix + ".removed",
+                        statAdd(economyStatsData.getLong(prefix + ".removed", 0L), money));
+                economyStatsData.set(prefix + ".bought",
+                        statAdd(economyStatsData.getLong(prefix + ".bought", 0L), amount));
+            }
+
+            economyStatsData.set(prefix + ".name", playerName);
+            economyStatsData.set(prefix + ".last_event", System.currentTimeMillis());
+
+            long playerCreated = economyStatsData.getLong(prefix + ".created", 0L);
+            long playerSold = economyStatsData.getLong(prefix + ".sold", 0L);
+            boolean flagged = economyStatsData.getBoolean(prefix + ".flagged_today", false);
+            if (!flagged && (money >= anomalySingleSaleLimit
+                    || playerCreated >= anomalyPlayerMoneyCreatedLimit
+                    || playerSold >= anomalyPlayerItemsSoldLimit)) {
+                economyStatsData.set(prefix + ".flagged_today", true);
+                String reason = money >= anomalySingleSaleLimit
+                        ? "single economy event $" + money
+                        : playerCreated >= anomalyPlayerMoneyCreatedLimit
+                        ? "daily money created $" + playerCreated
+                        : "daily items sold " + playerSold;
+                String flag = playerName + " (" + uuid + "): " + reason;
+                economyStatsData.set("flags." + uuid, flag);
+                getLogger().warning("ECONOMY_FLAG | " + flag);
+            }
+            saveEconomyStatsLocked();
+        } finally {
+            economyStatsLock.unlock();
+        }
+    }
+
+    private void economyStats(CommandSender sender) {
+        economyStatsLock.lock();
+        try {
+            long created = economyStatsData.getLong("money_created", 0L);
+            long removed = economyStatsData.getLong("money_removed", 0L);
+            long sold = economyStatsData.getLong("items_sold", 0L);
+            long bought = economyStatsData.getLong("items_bought", 0L);
+            sender.sendMessage("§6§lCoolWips Economy — Today");
+            sender.sendMessage("§7Money created: §a$" + money(created));
+            sender.sendMessage("§7Money removed: §c$" + money(removed));
+            sender.sendMessage("§7Net: §e$" + money(created >= removed ? created - removed : -(removed - created)));
+            sender.sendMessage("§7Items sold: §f" + sold);
+            sender.sendMessage("§7Items bought: §f" + bought);
+            var flags = economyStatsData.getConfigurationSection("flags");
+            sender.sendMessage("§7Anomaly flags: §f" + (flags == null ? 0 : flags.getKeys(false).size()));
+        } finally {
+            economyStatsLock.unlock();
+        }
+    }
+
+    private void economyAudit(CommandSender sender) {
+        int adjustments = validateCraftingEconomy();
+        economyStatsLock.lock();
+        try {
+            var flags = economyStatsData.getConfigurationSection("flags");
+            sender.sendMessage("§6§lCoolWips Economy Audit");
+            sender.sendMessage("§7Crafting safeguards adjusted: §f" + adjustments + " sell prices");
+            sender.sendMessage("§7Money created today: §a$" + money(economyStatsData.getLong("money_created", 0L)));
+            sender.sendMessage("§7Money removed today: §c$" + money(economyStatsData.getLong("money_removed", 0L)));
+            sender.sendMessage("§7Anomaly flags today: §f" + (flags == null ? 0 : flags.getKeys(false).size()));
+            if (flags != null) {
+                for (String key : flags.getKeys(false)) {
+                    sender.sendMessage("§cFLAG §f" + economyStatsData.getString("flags." + key, key));
+                }
+            }
+        } finally {
+            economyStatsLock.unlock();
+        }
+    }
+
+    private int validateCraftingEconomy() {
+        if (prices.isEmpty()) return 0;
+        int totalAdjustments = 0;
+        for (int pass = 0; pass < 6; pass++) {
+            int passAdjustments = 0;
+            RecipeIterator iterator = Bukkit.recipeIterator();
+            while (iterator.hasNext()) {
+                Recipe recipe = iterator.next();
+                if (!(recipe instanceof ShapedRecipe) && !(recipe instanceof ShapelessRecipe)) continue;
+
+                ItemStack result = recipe.getResult();
+                if (result == null || result.getType().isAir() || result.getAmount() <= 0) continue;
+
+                BigDecimal inputValue = BigDecimal.ZERO;
+                boolean allPriced = true;
+
+                if (recipe instanceof ShapedRecipe shaped) {
+                    for (ItemStack ingredient : shaped.getIngredientMap().values()) {
+                        if (ingredient == null || ingredient.getType().isAir()) continue;
+                        BigDecimal value = prices.get(ingredient.getType());
+                        if (value == null) { allPriced = false; break; }
+                        inputValue = inputValue.add(value.multiply(BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
+                    }
+                } else {
+                    for (ItemStack ingredient : ((ShapelessRecipe) recipe).getIngredientList()) {
+                        if (ingredient == null || ingredient.getType().isAir()) continue;
+                        BigDecimal value = prices.get(ingredient.getType());
+                        if (value == null) { allPriced = false; break; }
+                        inputValue = inputValue.add(value.multiply(BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
+                    }
+                }
+
+                BigDecimal current = prices.get(result.getType());
+                if (!allPriced || current == null || inputValue.signum() <= 0) continue;
+
+                BigDecimal safe = inputValue
+                        .divide(BigDecimal.valueOf(result.getAmount()), 6, RoundingMode.DOWN)
+                        .multiply(new BigDecimal("0.95"))
+                        .setScale(6, RoundingMode.DOWN)
+                        .max(new BigDecimal("0.000001"));
+
+                if (current.compareTo(safe) > 0) {
+                    prices.put(result.getType(), safe);
+                    passAdjustments++;
+                    getLogger().warning("CRAFTING_PRICE_GUARD | " + result.getType()
+                            + " => $" + safe.stripTrailingZeros().toPlainString());
+                }
+            }
+            totalAdjustments += passAdjustments;
+            if (passAdjustments == 0) break;
+        }
+        return totalAdjustments;
+    }
+
     private void loadRemotePrices() {
         loadRemoteSellFile(pricesUrl, "prices.txt", prices);
     }
