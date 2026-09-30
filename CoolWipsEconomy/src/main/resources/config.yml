@@ -25,9 +25,9 @@ settings:
   market-price-drop: 0.90
   market-min-price: 0.0001
   market-moss-min-price: 0.017
-  market-rules-version: 4
+  market-rules-version: 5
   # Market prices use the day's highest observed sold volume, so rollbacks cannot raise prices.
-  # Per-item balancing is defined in market.txt; 90% means each new tier is 10% of the previous tier.
+  # Per-item balancing is defined in market.txt and documented for every priced item in market_schedule.txt.
 
 prices:
   DIAMOND: 250
