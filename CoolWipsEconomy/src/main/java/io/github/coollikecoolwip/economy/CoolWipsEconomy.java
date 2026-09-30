@@ -1388,6 +1388,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         String discordId = linkedId(info.owner());
         if (discordId == null) {
+            releaseMarketBatch(marketSales);
             restoreChestItems(inventory, removed);
             playerLock.unlock();
             lock.unlock();
@@ -1401,6 +1402,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     "CoolWips SMP automatic sell chest", null);
             Bukkit.getScheduler().runTask(this, () -> {
                 if (result.state() == BankMutationState.NOT_APPLIED) {
+                    releaseMarketBatch(marketSales);
                     restoreChestItems(inventory, removed);
                     playerLock.unlock();
                     lock.unlock();
@@ -1712,6 +1714,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             Bukkit.getScheduler().runTask(this, () -> {
                 if (mutation.state() == BankMutationState.NOT_APPLIED) {
+                    releaseMarketSale(marketSale);
                     if (p.isOnline()) restoreItems(p, removed);
                     else if (returnLocation.getWorld() != null)
                         for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
