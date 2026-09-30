@@ -329,8 +329,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
             String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
             Map<Material, MarketRule> loaded = parseMarketRules(text, "bundled market.txt");
-            if (loaded.remove(null) != null) {
-                // No-op: DEFAULT is handled by parseMarketRules through the default rule field.
+            if (!loaded.isEmpty()) {
+                marketRules.putAll(loaded);
             }
             if (!loaded.isEmpty() || defaultMarketRule != null) {
                 getLogger().info("Loaded bundled market rules.");
@@ -478,7 +478,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         BigDecimal multiplier = BigDecimal.ONE.subtract(rule.dropPercent())
                 .pow((int) Math.min(steps, 1000L));
         BigDecimal price = base.multiply(multiplier);
-        BigDecimal floor = rule.minPrice();
+        BigDecimal floor = rule.minPrice().max(BigDecimal.ZERO).min(base);
         if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) {
             price = floor;
         }
