@@ -792,6 +792,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 economyStatsData.set("removed_by_item", null);
                 economyStatsData.set("sources", null);
                 economyStatsData.set("sinks", null);
+                economyStatsData.set("transfer_categories", null);
                 economyStatsData.set("players", null);
                 economyStatsData.set("flags", null);
                 saveEconomyStatsLocked();
@@ -827,6 +828,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         economyStatsData.set("removed_by_item", null);
         economyStatsData.set("sources", null);
         economyStatsData.set("sinks", null);
+        economyStatsData.set("transfer_categories", null);
         economyStatsData.set("players", null);
         economyStatsData.set("flags", null);
     }
@@ -989,6 +991,22 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         recordEconomyLedger(toUuid, toName, null, 0, money, "TRANSFER_IN", category);
     }
 
+    private String topStatsSummary(YamlConfiguration data, String sectionPath) {
+        var section = data.getConfigurationSection(sectionPath);
+        if (section == null) return "none";
+        return section.getKeys(false).stream()
+                .map(key -> Map.entry(key, data.getLong(sectionPath + "." + key, 0L)))
+                .filter(e -> e.getValue() > 0)
+                .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
+                .limit(5)
+                .map(e -> {
+                    Material m = Material.matchMaterial(e.getKey());
+                    return (m == null ? e.getKey() : pretty(m)) + " $" + money(e.getValue());
+                })
+                .reduce((a, b) -> a + "; " + b)
+                .orElse("none");
+    }
+
     private void economyStats(CommandSender sender) {
         economyStatsLock.lock();
         try {
@@ -1001,11 +1019,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             sender.sendMessage("§6§lCoolWips Economy — Today");
             sender.sendMessage("§7Money created: §a$" + money(created));
             sender.sendMessage("§7Money removed: §c$" + money(removed));
-            sender.sendMessage("§7Net: §e$" + money(created >= removed ? created - removed : -(removed - created)));
+            sender.sendMessage("§7Money transferred: §b$" + money(economyStatsData.getLong("money_transferred", 0L)));
+            sender.sendMessage("§7Net created/removed: §e$" + money(created >= removed ? created - removed : -(removed - created)));
             sender.sendMessage("§7Items sold: §f" + sold);
             sender.sendMessage("§7Items bought: §f" + bought);
+            sender.sendMessage("§7Player transfers: §f" + economyStatsData.getLong("transfers", 0L));
+            sender.sendMessage("§7Top money sources: §a" + topStatsSummary(economyStatsData, "created_by_item"));
+            sender.sendMessage("§7Top money sinks: §c" + topStatsSummary(economyStatsData, "removed_by_item"));
+            sender.sendMessage("§7Ledger entries retained: §f" + economyLedgerLines);
             var flags = economyStatsData.getConfigurationSection("flags");
-            sender.sendMessage("§7Anomaly flags: §f" + (flags == null ? 0 : flags.getKeys(false).size()));
+            var transferFlags = economyStatsData.getConfigurationSection("flags.transfer");
+            int flagCount = (flags == null ? 0 : flags.getKeys(false).size())
+                    + (transferFlags == null ? 0 : transferFlags.getKeys(false).size());
+            sender.sendMessage("§7Anomaly flags: §f" + flagCount);
         } finally {
             economyStatsLock.unlock();
         }
