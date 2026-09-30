@@ -457,7 +457,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         marketData.set("day", marketDay);
         marketData.set("rules_version", marketRulesVersion);
         marketData.set("rules_fingerprint", marketRulesFingerprint);
+        marketData.set("market_model", "per-player-per-item");
         marketData.set("players", null);
+        // Remove the obsolete pre-1.3.0 server-wide ledger keys permanently.
+        marketData.set("sold", null);
+        marketData.set("peak_sold", null);
 
         for (Map.Entry<UUID, Map<Material, Long>> player : marketSoldToday.entrySet()) {
             String base = "players." + player.getKey() + ".sold";
