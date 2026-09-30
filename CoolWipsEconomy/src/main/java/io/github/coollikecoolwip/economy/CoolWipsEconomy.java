@@ -142,6 +142,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // High-water mark prevents a failed/rolled-back reservation from ever making a player's price rise again.
     private final Map<UUID, Map<Material, Long>> marketPeakSoldToday = new ConcurrentHashMap<>();
     private final ReentrantLock marketLock = new ReentrantLock();
+    private final ReentrantLock marketDiskLock = new ReentrantLock();
+    private final AtomicBoolean marketSaveQueued = new AtomicBoolean(false);
+    private final AtomicBoolean marketDirty = new AtomicBoolean(false);
     private File marketFile;
     private YamlConfiguration marketData;
     private File economyStatsFile;
@@ -466,39 +469,94 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void saveMarketLedger() {
         marketLock.lock();
         try {
-            saveMarketLedgerLocked();
+            YamlConfiguration snapshot = snapshotMarketLedgerLocked();
+            marketDiskLock.lock();
+            try {
+                saveMarketSnapshot(snapshot);
+            } finally {
+                marketDiskLock.unlock();
+            }
         } finally {
             marketLock.unlock();
         }
     }
 
-    private void saveMarketLedgerLocked() {
-        if (marketFile == null || marketData == null) return;
-        marketData.set("day", marketDay);
-        marketData.set("rules_version", marketRulesVersion);
-        marketData.set("rules_fingerprint", marketRulesFingerprint);
-        marketData.set("market_model", "per-player-per-item");
-        marketData.set("players", null);
-        // Remove the obsolete pre-1.3.0 server-wide ledger keys permanently.
-        marketData.set("sold", null);
-        marketData.set("peak_sold", null);
+    private YamlConfiguration snapshotMarketLedgerLocked() {
+        YamlConfiguration snapshot = new YamlConfiguration();
+        snapshot.set("day", marketDay);
+        snapshot.set("rules_version", marketRulesVersion);
+        snapshot.set("rules_fingerprint", marketRulesFingerprint);
+        snapshot.set("market_model", "per-player-per-item");
 
         for (Map.Entry<UUID, Map<Material, Long>> player : marketSoldToday.entrySet()) {
             String base = "players." + player.getKey() + ".sold";
             for (Map.Entry<Material, Long> entry : player.getValue().entrySet()) {
-                marketData.set(base + "." + entry.getKey().name(), entry.getValue());
+                snapshot.set(base + "." + entry.getKey().name(), entry.getValue());
             }
         }
         for (Map.Entry<UUID, Map<Material, Long>> player : marketPeakSoldToday.entrySet()) {
             String base = "players." + player.getKey() + ".peak_sold";
             for (Map.Entry<Material, Long> entry : player.getValue().entrySet()) {
-                marketData.set(base + "." + entry.getKey().name(), entry.getValue());
+                snapshot.set(base + "." + entry.getKey().name(), entry.getValue());
             }
         }
+        return snapshot;
+    }
+
+    private void saveMarketSnapshot(YamlConfiguration snapshot) {
+        if (marketFile == null || snapshot == null) return;
         try {
-            marketData.save(marketFile);
+            snapshot.save(marketFile);
         } catch (IOException e) {
             getLogger().warning("Could not save market ledger: " + e.getMessage());
+        }
+    }
+
+    private void requestMarketLedgerSaveLocked() {
+        marketDirty.set(true);
+        if (!marketSaveQueued.compareAndSet(false, true)) return;
+        Bukkit.getScheduler().runTaskLaterAsynchronously(this, this::flushMarketLedgerAsync, 20L);
+    }
+
+    private void requestMarketLedgerSave() {
+        if (!marketSaveQueued.compareAndSet(false, true)) return;
+        Bukkit.getScheduler().runTaskLaterAsynchronously(this, this::flushMarketLedgerAsync, 20L);
+    }
+
+    private void flushMarketLedgerAsync() {
+        try {
+            YamlConfiguration snapshot = null;
+            marketLock.lock();
+            try {
+                if (marketDirty.get()) {
+                    snapshot = snapshotMarketLedgerLocked();
+                    marketDirty.set(false);
+                }
+            } finally {
+                marketLock.unlock();
+            }
+
+            if (snapshot != null) {
+                marketDiskLock.lock();
+                try {
+                    saveMarketSnapshot(snapshot);
+                } finally {
+                    marketDiskLock.unlock();
+                }
+            }
+        } finally {
+            marketSaveQueued.set(false);
+            if (marketDirty.get()) requestMarketLedgerSave();
+        }
+    }
+
+    private void saveMarketLedgerLocked() {
+        YamlConfiguration snapshot = snapshotMarketLedgerLocked();
+        marketDiskLock.lock();
+        try {
+            saveMarketSnapshot(snapshot);
+        } finally {
+            marketDiskLock.unlock();
         }
     }
 
@@ -508,7 +566,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         marketDay = today;
         marketSoldToday.clear();
         marketPeakSoldToday.clear();
-        saveMarketLedgerLocked();
+        requestMarketLedgerSaveLocked();
     }
 
     private boolean isFarmIncomeMaterial(Material material) {
@@ -618,7 +676,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             long newSold = Math.addExact(sold, amount);
             soldMap.put(material, newSold);
             peakMap.merge(material, newSold, Math::max);
-            saveMarketLedgerLocked();
+            requestMarketLedgerSaveLocked();
             return new MarketSale(owner, material, amount, gross, true);
         } catch (ArithmeticException e) {
             return null;
@@ -659,7 +717,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 soldMap.put(entry.getKey(), entry.getValue());
                 peakMap.merge(entry.getKey(), entry.getValue(), Math::max);
             }
-            if (!newTotals.isEmpty()) saveMarketLedgerLocked();
+            if (!newTotals.isEmpty()) requestMarketLedgerSaveLocked();
             return result;
         } catch (ArithmeticException e) {
             return Collections.emptyMap();
@@ -680,7 +738,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (restored == 0L) soldMap.remove(sale.material());
             else soldMap.put(sale.material(), restored);
             if (soldMap.isEmpty()) marketSoldToday.remove(sale.owner());
-            saveMarketLedgerLocked();
+            requestMarketLedgerSaveLocked();
         } finally {
             marketLock.unlock();
         }
