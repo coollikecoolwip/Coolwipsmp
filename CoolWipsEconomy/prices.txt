@@ -10,7 +10,7 @@ SALMON_BUCKET=31
 PUFFERFISH_BUCKET=33
 TROPICAL_FISH_BUCKET=32
 AXOLOTL=200
-AXOLOTL_BUCKET=250
+AXOLOTL_BUCKET=150
 TADPOLE_BUCKET=31
 
 # Purely renewable/AFK farm outputs are intentionally low so they are not dominant money makers.
