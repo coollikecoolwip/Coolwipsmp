@@ -472,13 +472,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private MarketRule marketRuleFor(Material material) {
-        if (material == Material.MOSS_BLOCK) {
-            return new MarketRule(2048L, 512L, new BigDecimal("0.90"), new BigDecimal("0.017"));
-        }
         MarketRule rule = marketRules.get(material);
         return rule != null ? rule : defaultMarketRule;
     }
-
     private BigDecimal marketUnitPrice(Material material, long sold) {
         return marketUnitPrice(null, material, sold);
     }
@@ -1552,7 +1548,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         inventory.setContents(contents);
 
-        Map<Material, MarketSale> marketSales = reserveMarketBatch(amounts);
+        Map<Material, MarketSale> marketSales = reserveMarketBatch(info.owner(), amounts);
         if (marketSales.size() != amounts.size()) {
             restoreChestItems(inventory, removed);
             playerLock.unlock();
