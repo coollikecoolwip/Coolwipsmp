@@ -126,10 +126,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             "PALE_OAK", "BAMBOO", "CRIMSON", "WARPED"
     );
 
-    private final Map<Material, Long> marketSoldToday = new ConcurrentHashMap<>();
-    // High-water mark prevents a failed/rolled-back reservation from ever making
-    // a day's market price rise again.
-    private final Map<Material, Long> marketPeakSoldToday = new ConcurrentHashMap<>();
+    // Dynamic market volume is isolated per player so one grinder cannot depress another player's prices.
+    private final Map<UUID, Map<Material, Long>> marketSoldToday = new ConcurrentHashMap<>();
+    // High-water mark prevents a failed/rolled-back reservation from ever making a player's price rise again.
+    private final Map<UUID, Map<Material, Long>> marketPeakSoldToday = new ConcurrentHashMap<>();
     private final ReentrantLock marketLock = new ReentrantLock();
     private File marketFile;
     private YamlConfiguration marketData;
@@ -145,7 +145,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private MarketRule defaultMarketRule;
 
     private record MarketRule(long fullPriceUnits, long stepUnits, BigDecimal dropPercent, BigDecimal minPrice) {}
-    private record MarketSale(Material material, int amount, BigDecimal gross, boolean marketTracked) {}
+    private record MarketSale(UUID owner, Material material, int amount, BigDecimal gross, boolean marketTracked) {}
 
 
     private static final Set<String> UNSAFE_SELL_MATERIALS = Set.of(
@@ -358,55 +358,68 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (storedRulesVersion != marketRulesVersion || storedRulesFingerprint != marketRulesFingerprint) {
                 marketSoldToday.clear();
                 marketPeakSoldToday.clear();
+                marketData.set("players", null);
                 marketData.set("sold", null);
                 marketData.set("peak_sold", null);
                 marketData.set("day", marketDay);
                 marketData.set("rules_version", marketRulesVersion);
                 marketData.set("rules_fingerprint", marketRulesFingerprint);
                 saveMarketLedgerLocked();
-                getLogger().info("Market rules version changed to " + marketRulesVersion
-                        + "; resetting today's market volume.");
+                getLogger().info("Market rules/accounting model changed; resetting market volume.");
                 return;
             }
 
             if (!marketDay.equals(marketData.getString("day", ""))) {
                 marketSoldToday.clear();
                 marketPeakSoldToday.clear();
+                marketData.set("players", null);
                 marketData.set("sold", null);
                 marketData.set("peak_sold", null);
                 marketData.set("day", marketDay);
                 marketData.set("rules_version", marketRulesVersion);
+                marketData.set("rules_fingerprint", marketRulesFingerprint);
                 saveMarketLedgerLocked();
                 return;
             }
 
-            var section = marketData.getConfigurationSection("sold");
-            if (section != null) {
-                for (String key : section.getKeys(false)) {
+            var players = marketData.getConfigurationSection("players");
+            if (players != null) {
+                for (String uuidText : players.getKeys(false)) {
                     try {
-                        Material material = Material.matchMaterial(key);
-                        long sold = Long.parseLong(marketData.getString("sold." + key, "0"));
-                        if (material != null && sold > 0) marketSoldToday.put(material, sold);
-                    } catch (Exception ignored) {
-                        getLogger().warning("Ignoring invalid market ledger entry: " + key);
+                        UUID uuid = UUID.fromString(uuidText);
+                        var soldSection = marketData.getConfigurationSection("players." + uuidText + ".sold");
+                        if (soldSection != null) {
+                            Map<Material, Long> sold = new ConcurrentHashMap<>();
+                            for (String key : soldSection.getKeys(false)) {
+                                Material material = Material.matchMaterial(key);
+                                long amount = marketData.getLong("players." + uuidText + ".sold." + key, 0L);
+                                if (material != null && amount > 0) sold.put(material, amount);
+                            }
+                            if (!sold.isEmpty()) marketSoldToday.put(uuid, sold);
+                        }
+
+                        var peakSection = marketData.getConfigurationSection("players." + uuidText + ".peak_sold");
+                        if (peakSection != null) {
+                            Map<Material, Long> peak = new ConcurrentHashMap<>();
+                            for (String key : peakSection.getKeys(false)) {
+                                Material material = Material.matchMaterial(key);
+                                long amount = marketData.getLong("players." + uuidText + ".peak_sold." + key, 0L);
+                                if (material != null && amount > 0) peak.put(material, amount);
+                            }
+                            if (!peak.isEmpty()) marketPeakSoldToday.put(uuid, peak);
+                        }
+                    } catch (Exception e) {
+                        getLogger().warning("Ignoring invalid market player ledger entry: " + uuidText);
                     }
                 }
             }
 
-            var peakSection = marketData.getConfigurationSection("peak_sold");
-            if (peakSection != null) {
-                for (String key : peakSection.getKeys(false)) {
-                    try {
-                        Material material = Material.matchMaterial(key);
-                        long peak = Long.parseLong(marketData.getString("peak_sold." + key, "0"));
-                        if (material != null && peak > 0) marketPeakSoldToday.put(material, peak);
-                    } catch (Exception ignored) {
-                        getLogger().warning("Ignoring invalid market peak entry: " + key);
-                    }
+            for (Map.Entry<UUID, Map<Material, Long>> player : marketSoldToday.entrySet()) {
+                Map<Material, Long> peak = marketPeakSoldToday.computeIfAbsent(
+                        player.getKey(), k -> new ConcurrentHashMap<>());
+                for (Map.Entry<Material, Long> entry : player.getValue().entrySet()) {
+                    peak.merge(entry.getKey(), entry.getValue(), Math::max);
                 }
-            }
-            for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
-                marketPeakSoldToday.merge(entry.getKey(), entry.getValue(), Math::max);
             }
         } finally {
             marketLock.unlock();
@@ -427,28 +440,25 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         marketData.set("day", marketDay);
         marketData.set("rules_version", marketRulesVersion);
         marketData.set("rules_fingerprint", marketRulesFingerprint);
-        marketData.set("sold", null);
-        marketData.set("peak_sold", null);
-        for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
-            marketData.set("sold." + entry.getKey().name(), entry.getValue());
+        marketData.set("players", null);
+
+        for (Map.Entry<UUID, Map<Material, Long>> player : marketSoldToday.entrySet()) {
+            String base = "players." + player.getKey() + ".sold";
+            for (Map.Entry<Material, Long> entry : player.getValue().entrySet()) {
+                marketData.set(base + "." + entry.getKey().name(), entry.getValue());
+            }
         }
-        for (Map.Entry<Material, Long> entry : marketPeakSoldToday.entrySet()) {
-            marketData.set("peak_sold." + entry.getKey().name(), entry.getValue());
+        for (Map.Entry<UUID, Map<Material, Long>> player : marketPeakSoldToday.entrySet()) {
+            String base = "players." + player.getKey() + ".peak_sold";
+            for (Map.Entry<Material, Long> entry : player.getValue().entrySet()) {
+                marketData.set(base + "." + entry.getKey().name(), entry.getValue());
+            }
         }
         try {
             marketData.save(marketFile);
         } catch (IOException e) {
             getLogger().warning("Could not save market ledger: " + e.getMessage());
         }
-    }
-
-    private void refreshMarketDayLocked() {
-        String today = LocalDate.now(ZoneId.systemDefault()).toString();
-        if (today.equals(marketDay)) return;
-        marketDay = today;
-        marketSoldToday.clear();
-        marketPeakSoldToday.clear();
-        saveMarketLedgerLocked();
     }
 
     private boolean isFarmIncomeMaterial(Material material) {
@@ -466,11 +476,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return new MarketRule(2048L, 512L, new BigDecimal("0.90"), new BigDecimal("0.017"));
         }
         MarketRule rule = marketRules.get(material);
-        if (rule != null) return rule;
-        return defaultMarketRule;
+        return rule != null ? rule : defaultMarketRule;
     }
 
     private BigDecimal marketUnitPrice(Material material, long sold) {
+        return marketUnitPrice(null, material, sold);
+    }
+
+    private BigDecimal marketUnitPrice(UUID owner, Material material, long sold) {
         BigDecimal base = prices.get(material);
         if (base == null || !isFarmIncomeMaterial(material)) return base;
 
@@ -485,13 +498,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 .pow((int) Math.min(steps, 1000L));
         BigDecimal price = base.multiply(multiplier);
         BigDecimal floor = rule.minPrice().max(BigDecimal.ZERO).min(base);
-        if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) {
-            price = floor;
-        }
+        if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) price = floor;
         return price;
     }
 
     private BigDecimal marketGrossForSale(Material material, long sold, int amount) {
+        return marketGrossForSale(null, material, sold, amount);
+    }
+
+    private BigDecimal marketGrossForSale(UUID owner, Material material, long sold, int amount) {
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return BigDecimal.ZERO;
         if (!isFarmIncomeMaterial(material)) return base.multiply(BigDecimal.valueOf(amount));
@@ -499,19 +514,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         MarketRule rule = marketRuleFor(material);
         if (rule == null) return base.multiply(BigDecimal.valueOf(amount));
 
-        long full = rule.fullPriceUnits();
-        long step = rule.stepUnits();
+        long full = rule.fullPriceUnits(), step = rule.stepUnits();
         if (step <= 0) return base.multiply(BigDecimal.valueOf(amount));
 
-        long remaining = amount;
-        long cursor = sold;
+        long remaining = amount, cursor = sold;
         BigDecimal gross = BigDecimal.ZERO;
         while (remaining > 0) {
-            BigDecimal unit = marketUnitPrice(material, cursor);
+            BigDecimal unit = marketUnitPrice(owner, material, cursor);
             long nextBoundary;
-            if (cursor < full) {
-                nextBoundary = full;
-            } else {
+            if (cursor < full) nextBoundary = full;
+            else {
                 long stepIndex = (cursor - full) / step;
                 nextBoundary = full + Math.multiplyExact(stepIndex + 1L, step);
             }
@@ -524,37 +536,44 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private BigDecimal currentSellPrice(Material material) {
+        return currentSellPrice(null, material);
+    }
+
+    private BigDecimal currentSellPrice(UUID owner, Material material) {
         BigDecimal base = prices.get(material);
-        if (base == null || !isFarmIncomeMaterial(material)) return base;
+        if (base == null || !isFarmIncomeMaterial(material) || owner == null) return base;
         marketLock.lock();
         try {
             refreshMarketDayLocked();
-            long sold = Math.max(
-                    marketSoldToday.getOrDefault(material, 0L),
-                    marketPeakSoldToday.getOrDefault(material, 0L));
-            return marketUnitPrice(material, sold);
+            Map<Material, Long> soldMap = marketSoldToday.getOrDefault(owner, Collections.emptyMap());
+            Map<Material, Long> peakMap = marketPeakSoldToday.getOrDefault(owner, Collections.emptyMap());
+            long sold = Math.max(soldMap.getOrDefault(material, 0L), peakMap.getOrDefault(material, 0L));
+            return marketUnitPrice(owner, material, sold);
         } finally {
             marketLock.unlock();
         }
     }
 
-    private MarketSale reserveMarketSale(Material material, int amount) {
+    private MarketSale reserveMarketSale(UUID owner, Material material, int amount) {
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return null;
         if (!isFarmIncomeMaterial(material)) {
-            return new MarketSale(material, amount, base.multiply(BigDecimal.valueOf(amount)), false);
+            return new MarketSale(owner, material, amount, base.multiply(BigDecimal.valueOf(amount)), false);
         }
+
         marketLock.lock();
         try {
             refreshMarketDayLocked();
-            long sold = marketSoldToday.getOrDefault(material, 0L);
-            long pricingSold = Math.max(sold, marketPeakSoldToday.getOrDefault(material, 0L));
-            BigDecimal gross = marketGrossForSale(material, pricingSold, amount);
+            Map<Material, Long> soldMap = marketSoldToday.computeIfAbsent(owner, k -> new ConcurrentHashMap<>());
+            Map<Material, Long> peakMap = marketPeakSoldToday.computeIfAbsent(owner, k -> new ConcurrentHashMap<>());
+            long sold = soldMap.getOrDefault(material, 0L);
+            long pricingSold = Math.max(sold, peakMap.getOrDefault(material, 0L));
+            BigDecimal gross = marketGrossForSale(owner, material, pricingSold, amount);
             long newSold = Math.addExact(sold, amount);
-            marketSoldToday.put(material, newSold);
-            marketPeakSoldToday.merge(material, newSold, Math::max);
+            soldMap.put(material, newSold);
+            peakMap.merge(material, newSold, Math::max);
             saveMarketLedgerLocked();
-            return new MarketSale(material, amount, gross, true);
+            return new MarketSale(owner, material, amount, gross, true);
         } catch (ArithmeticException e) {
             return null;
         } catch (RuntimeException e) {
@@ -565,12 +584,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
-    private Map<Material, MarketSale> reserveMarketBatch(Map<Material, Integer> amounts) {
+    private Map<Material, MarketSale> reserveMarketBatch(UUID owner, Map<Material, Integer> amounts) {
         Map<Material, MarketSale> result = new LinkedHashMap<>();
         marketLock.lock();
         try {
             refreshMarketDayLocked();
+            Map<Material, Long> soldMap = marketSoldToday.computeIfAbsent(owner, k -> new ConcurrentHashMap<>());
+            Map<Material, Long> peakMap = marketPeakSoldToday.computeIfAbsent(owner, k -> new ConcurrentHashMap<>());
             Map<Material, Long> newTotals = new HashMap<>();
+
             for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
                 Material material = entry.getKey();
                 int amount = entry.getValue();
@@ -578,19 +600,18 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 if (base == null || amount <= 0) continue;
 
                 boolean tracked = isFarmIncomeMaterial(material);
-                long sold = marketSoldToday.getOrDefault(material, 0L);
-                long pricingSold = Math.max(sold, marketPeakSoldToday.getOrDefault(material, 0L));
-                BigDecimal gross = tracked
-                        ? marketGrossForSale(material, pricingSold, amount)
+                long sold = soldMap.getOrDefault(material, 0L);
+                long pricingSold = Math.max(sold, peakMap.getOrDefault(material, 0L));
+                BigDecimal gross = tracked ? marketGrossForSale(owner, material, pricingSold, amount)
                         : base.multiply(BigDecimal.valueOf(amount));
                 if (tracked) newTotals.put(material, Math.addExact(sold, amount));
-                result.put(material, new MarketSale(material, amount, gross, tracked));
+                result.put(material, new MarketSale(owner, material, amount, gross, tracked));
             }
 
             if (result.size() != amounts.size()) return Collections.emptyMap();
             for (Map.Entry<Material, Long> entry : newTotals.entrySet()) {
-                marketSoldToday.put(entry.getKey(), entry.getValue());
-                marketPeakSoldToday.merge(entry.getKey(), entry.getValue(), Math::max);
+                soldMap.put(entry.getKey(), entry.getValue());
+                peakMap.merge(entry.getKey(), entry.getValue(), Math::max);
             }
             if (!newTotals.isEmpty()) saveMarketLedgerLocked();
             return result;
@@ -602,14 +623,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void releaseMarketSale(MarketSale sale) {
-        if (sale == null || !sale.marketTracked()) return;
+        if (sale == null || !sale.marketTracked() || sale.owner() == null) return;
         marketLock.lock();
         try {
             refreshMarketDayLocked();
-            long current = marketSoldToday.getOrDefault(sale.material(), 0L);
+            Map<Material, Long> soldMap = marketSoldToday.get(sale.owner());
+            if (soldMap == null) return;
+            long current = soldMap.getOrDefault(sale.material(), 0L);
             long restored = Math.max(0L, current - sale.amount());
-            if (restored == 0L) marketSoldToday.remove(sale.material());
-            else marketSoldToday.put(sale.material(), restored);
+            if (restored == 0L) soldMap.remove(sale.material());
+            else soldMap.put(sale.material(), restored);
+            if (soldMap.isEmpty()) marketSoldToday.remove(sale.owner());
             saveMarketLedgerLocked();
         } finally {
             marketLock.unlock();
@@ -622,11 +646,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         try {
             refreshMarketDayLocked();
             for (MarketSale sale : sales.values()) {
-                if (!sale.marketTracked()) continue;
-                long current = marketSoldToday.getOrDefault(sale.material(), 0L);
+                if (!sale.marketTracked() || sale.owner() == null) continue;
+                Map<Material, Long> soldMap = marketSoldToday.get(sale.owner());
+                if (soldMap == null) continue;
+                long current = soldMap.getOrDefault(sale.material(), 0L);
                 long restored = Math.max(0L, current - sale.amount());
-                if (restored == 0L) marketSoldToday.remove(sale.material());
-                else marketSoldToday.put(sale.material(), restored);
+                if (restored == 0L) soldMap.remove(sale.material());
+                else soldMap.put(sale.material(), restored);
+                if (soldMap.isEmpty()) marketSoldToday.remove(sale.owner());
             }
             saveMarketLedgerLocked();
         } finally {
@@ -1170,7 +1197,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case "prices" -> {
                 int page = parsePage(sender, args);
                 if (page < 1) return true;
-                showPaged(sender, currentSellPrices(), page, "CoolWips Sell Prices", "/prices");
+                showPaged(sender, currentSellPrices(sender instanceof Player p ? p.getUniqueId() : null), page, "CoolWips Sell Prices", "/prices");
                 return true;
             }
 
@@ -1809,7 +1836,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         // being executed. The returned gross is immutable for this transaction, so
         // another sale cannot change this sale's payout after the items are removed.
         if (requested != -2) {
-            BigDecimal previewUnit = currentSellPrice(material);
+            BigDecimal previewUnit = currentSellPrice(p.getUniqueId(), material);
             if (previewUnit == null) {
                 p.sendMessage("§cThat item cannot be sold. Use /prices.");
                 return;
@@ -1860,7 +1887,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             // Get the exact market quote before removing anything.
             // Once reserved, this sale keeps that quote even if another player sells
             // the same item concurrently.
-            marketSale = reserveMarketSale(finalMaterial, finalAmount);
+            marketSale = reserveMarketSale(p.getUniqueId(), finalMaterial, finalAmount);
             if (marketSale == null) {
                 lock.unlock();
                 p.sendMessage("§cSale cancelled because the market price could not be reserved.");
@@ -3096,7 +3123,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Full-price volume per item: §f" + marketFreeUnits + " units/day");
         sender.sendMessage("§7Price drop per step: §f" + marketDropPercent.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%");
         sender.sendMessage("§7Minimum market price: §f$" + marketMinPrice.stripTrailingZeros().toPlainString());
-        sender.sendMessage("§7Custom market rules: §f" + marketRules.size());
+        sender.sendMessage("§7Custom market rules: §f" + marketRules.size() + " (per-player market)");
         sender.sendMessage("§7Market rules URL: §f" + marketRulesUrl);
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
@@ -3112,10 +3139,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
 
-    private Map<Material, BigDecimal> currentSellPrices() {
+    private Map<Material, BigDecimal> currentSellPrices(UUID owner) {
         Map<Material, BigDecimal> snapshot = new HashMap<>();
         for (Material material : prices.keySet()) {
-            BigDecimal value = currentSellPrice(material);
+            BigDecimal value = currentSellPrice(owner, material);
             if (value != null) snapshot.put(material, value);
         }
         return snapshot;
