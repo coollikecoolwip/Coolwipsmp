@@ -1,4 +1,4 @@
-# CoolWips Economy 1.3.1
+# CoolWips Economy 1.3.2
 
 Simple Paper 26.2 economy plugin for CoolWips SMP.
 
@@ -49,3 +49,5 @@ Sell chests: use `/sellchest create` while looking at a chest. Put items with a 
 The dynamic market is tracked independently for each player and item. One player's high-volume farm cannot lower another player's sell price. The plugin keeps a high-water mark for each player/item so failed rollbacks cannot raise a farm's price unexpectedly during the same day. Crafting, stonecutting, and cooking conversions are audited at startup/reload so configured sell prices cannot create a simple conversion loop; shop prices are also checked with exact decimal arithmetic.
 
 Confirmed server money creation/removal and player-to-player transfers are recorded in the daily economy statistics and a bounded economy-ledger.log file in the plugin data folder. Use /cweconomy stats and /cweconomy audit for routine checks.
+
+Performance note: economy statistics, transaction ledger, and dynamic-market persistence use batched asynchronous disk writes during gameplay; shutdown still performs a final synchronous save.
