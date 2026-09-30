@@ -710,6 +710,24 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void refreshEconomyStatsDayLocked() {
+        String today = LocalDate.now(ZoneId.systemDefault()).toString();
+        if (economyStatsDay != null && today.equals(economyStatsDay.toString())) return;
+
+        economyStatsDay = LocalDate.parse(today);
+        economyStatsData.set("day", today);
+        economyStatsData.set("money_created", 0L);
+        economyStatsData.set("money_removed", 0L);
+        economyStatsData.set("items_sold", 0L);
+        economyStatsData.set("items_bought", 0L);
+        economyStatsData.set("created_by_item", null);
+        economyStatsData.set("removed_by_item", null);
+        economyStatsData.set("sources", null);
+        economyStatsData.set("sinks", null);
+        economyStatsData.set("players", null);
+        economyStatsData.set("flags", null);
+    }
+
     private void saveEconomyStatsLocked() {
         if (economyStatsFile == null || economyStatsData == null) return;
         economyStatsData.set("day", economyStatsDay == null
@@ -739,6 +757,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (uuid == null || material == null || money <= 0) return;
         economyStatsLock.lock();
         try {
+            refreshEconomyStatsDayLocked();
             String prefix = "players." + uuid;
             if (created) {
                 economyStatsData.set("money_created",
@@ -796,6 +815,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void economyStats(CommandSender sender) {
         economyStatsLock.lock();
         try {
+            refreshEconomyStatsDayLocked();
+            saveEconomyStatsLocked();
             long created = economyStatsData.getLong("money_created", 0L);
             long removed = economyStatsData.getLong("money_removed", 0L);
             long sold = economyStatsData.getLong("items_sold", 0L);
@@ -817,6 +838,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         int adjustments = validateCraftingEconomy();
         economyStatsLock.lock();
         try {
+            refreshEconomyStatsDayLocked();
+            saveEconomyStatsLocked();
             var flags = economyStatsData.getConfigurationSection("flags");
             sender.sendMessage("§6§lCoolWips Economy Audit");
             sender.sendMessage("§7Crafting safeguards adjusted: §f" + adjustments + " sell prices");
@@ -831,6 +854,46 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         } finally {
             economyStatsLock.unlock();
         }
+
+        List<Player> online = new ArrayList<>(Bukkit.getOnlinePlayers());
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            List<Long> balances = new ArrayList<>();
+            for (Player player : online) {
+                try {
+                    String linked = linkedId(player.getUniqueId());
+                    Long balance = linked == null ? null : bankBalance(linked);
+                    if (balance != null && balance >= 0) balances.add(balance);
+                } catch (RuntimeException ignored) {
+                    // The audit is observational; one failed account lookup must not abort the others.
+                }
+            }
+
+            if (balances.isEmpty()) {
+                Bukkit.getScheduler().runTask(this, () ->
+                        sender.sendMessage("§7Online balance audit: §cno verified linked accounts."));
+                return;
+            }
+
+            balances.sort(Long::compareTo);
+            long total = 0L;
+            for (long balance : balances) {
+                total = statAdd(total, balance);
+            }
+            long median = balances.size() % 2 == 1
+                    ? balances.get(balances.size() / 2)
+                    : (balances.get(balances.size() / 2 - 1) / 2L
+                    + balances.get(balances.size() / 2) / 2L);
+            long average = total / balances.size();
+            long minimum = balances.get(0);
+            long maximum = balances.get(balances.size() - 1);
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                sender.sendMessage("§7Online verified accounts: §f" + balances.size());
+                sender.sendMessage("§7Online average balance: §f$" + money(average));
+                sender.sendMessage("§7Online median balance: §f$" + money(median));
+                sender.sendMessage("§7Online range: §f$" + money(minimum) + " — $" + money(maximum));
+            });
+        });
     }
 
     private int validateCraftingEconomy() {
