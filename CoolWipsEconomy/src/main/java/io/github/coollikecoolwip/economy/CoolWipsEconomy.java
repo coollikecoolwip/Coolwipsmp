@@ -29,8 +29,8 @@ import org.bukkit.event.block.Action;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.io.File;
-import java.io.IOException;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import org.bukkit.configuration.file.YamlConfiguration;
@@ -49,7 +49,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
-    private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl;
+    private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl, marketRulesUrl;
     private static final String DEFAULT_PRICES_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt";
     private static final String DEFAULT_SHOP_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt";
     private int maxItems, pricesPerPage;
@@ -139,7 +139,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketDropPercent;
     private BigDecimal marketMinPrice;
     private BigDecimal marketMossMinPrice;
+    private int marketRulesVersion;
+    private final Map<Material, MarketRule> marketRules = new ConcurrentHashMap<>();
+    private MarketRule defaultMarketRule;
 
+    private record MarketRule(long fullPriceUnits, long stepUnits, BigDecimal dropPercent, BigDecimal minPrice) {}
     private record MarketSale(Material material, int amount, BigDecimal gross, boolean marketTracked) {}
 
 
@@ -156,6 +160,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
         sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
+        loadBundledMarketRules();
         loadMarketLedger();
         Bukkit.getPluginManager().registerEvents(this, this);
 
@@ -173,6 +178,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         loadRemotePrices();
         loadRemoteShop();
+        loadRemoteMarketRules();
         startNonNegativeBalanceGuard();
     }
 
@@ -192,6 +198,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         shopUrl = getConfig().getString("shop-url", DEFAULT_SHOP_URL).trim();
         if (pricesUrl.isBlank()) pricesUrl = DEFAULT_PRICES_URL;
         if (shopUrl.isBlank()) shopUrl = DEFAULT_SHOP_URL;
+        marketRulesUrl = getConfig().getString("market-rules-url",
+                "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/src/main/resources/market.txt").trim();
+        if (marketRulesUrl.isBlank()) {
+            marketRulesUrl = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/src/main/resources/market.txt";
+        }
 
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
@@ -210,6 +221,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 .max(BigDecimal.ZERO);
         marketMossMinPrice = parseDecimalSetting("settings.market-moss-min-price", new BigDecimal("0.017"))
                 .max(BigDecimal.ZERO);
+        marketRulesVersion = Math.max(1, getConfig().getInt("settings.market-rules-version", 2));
+        defaultMarketRule = new MarketRule(
+                marketFreeUnits,
+                marketStepUnits,
+                marketDropPercent,
+                marketMinPrice
+        );
 
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
@@ -303,6 +321,25 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void loadBundledMarketRules() {
+        try (InputStream in = getResource("market.txt")) {
+            if (in == null) {
+                getLogger().warning("Bundled market.txt was not found; using config fallback market rules.");
+                return;
+            }
+            String text = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+            Map<Material, MarketRule> loaded = parseMarketRules(text, "bundled market.txt");
+            if (loaded.remove(null) != null) {
+                // No-op: DEFAULT is handled by parseMarketRules through the default rule field.
+            }
+            if (!loaded.isEmpty() || defaultMarketRule != null) {
+                getLogger().info("Loaded bundled market rules.");
+            }
+        } catch (Exception e) {
+            getLogger().warning("Could not load bundled market.txt: " + e.getMessage());
+        }
+    }
+
     private void loadMarketLedger() {
         marketLock.lock();
         try {
@@ -313,12 +350,27 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             marketData = YamlConfiguration.loadConfiguration(marketFile);
             marketDay = LocalDate.now(ZoneId.systemDefault()).toString();
 
+            int storedRulesVersion = marketData.getInt("rules_version", -1);
+            if (storedRulesVersion != marketRulesVersion) {
+                marketSoldToday.clear();
+                marketPeakSoldToday.clear();
+                marketData.set("sold", null);
+                marketData.set("peak_sold", null);
+                marketData.set("day", marketDay);
+                marketData.set("rules_version", marketRulesVersion);
+                saveMarketLedgerLocked();
+                getLogger().info("Market rules version changed to " + marketRulesVersion
+                        + "; resetting today's market volume.");
+                return;
+            }
+
             if (!marketDay.equals(marketData.getString("day", ""))) {
                 marketSoldToday.clear();
                 marketPeakSoldToday.clear();
                 marketData.set("sold", null);
                 marketData.set("peak_sold", null);
                 marketData.set("day", marketDay);
+                marketData.set("rules_version", marketRulesVersion);
                 saveMarketLedgerLocked();
                 return;
             }
@@ -368,6 +420,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void saveMarketLedgerLocked() {
         if (marketFile == null || marketData == null) return;
         marketData.set("day", marketDay);
+        marketData.set("rules_version", marketRulesVersion);
         marketData.set("sold", null);
         marketData.set("peak_sold", null);
         for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
@@ -402,18 +455,30 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return name.contains("WOOL") || name.endsWith("_CARPET") || name.endsWith("_BED");
     }
 
+    private MarketRule marketRuleFor(Material material) {
+        if (material == Material.MOSS_BLOCK) {
+            return new MarketRule(2048L, 512L, new BigDecimal("0.90"), new BigDecimal("0.017"));
+        }
+        MarketRule rule = marketRules.get(material);
+        if (rule != null) return rule;
+        return defaultMarketRule;
+    }
+
     private BigDecimal marketUnitPrice(Material material, long sold) {
         BigDecimal base = prices.get(material);
         if (base == null || !isFarmIncomeMaterial(material)) return base;
-        if (sold < marketFreeUnits || marketStepUnits <= 0 || marketDropPercent.signum() <= 0) return base;
 
-        long steps = 1L + (sold - marketFreeUnits) / marketStepUnits;
-        BigDecimal multiplier = BigDecimal.ONE.subtract(marketDropPercent)
+        MarketRule rule = marketRuleFor(material);
+        if (rule == null || sold < rule.fullPriceUnits()
+                || rule.stepUnits() <= 0 || rule.dropPercent().signum() <= 0) {
+            return base;
+        }
+
+        long steps = 1L + (sold - rule.fullPriceUnits()) / rule.stepUnits();
+        BigDecimal multiplier = BigDecimal.ONE.subtract(rule.dropPercent())
                 .pow((int) Math.min(steps, 1000L));
         BigDecimal price = base.multiply(multiplier);
-        BigDecimal floor = material == Material.MOSS_BLOCK
-                ? (marketMossMinPrice == null ? new BigDecimal("0.017") : marketMossMinPrice)
-                : marketMinPrice;
+        BigDecimal floor = rule.minPrice();
         if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) {
             price = floor;
         }
@@ -425,17 +490,24 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (base == null || amount <= 0) return BigDecimal.ZERO;
         if (!isFarmIncomeMaterial(material)) return base.multiply(BigDecimal.valueOf(amount));
 
+        MarketRule rule = marketRuleFor(material);
+        if (rule == null) return base.multiply(BigDecimal.valueOf(amount));
+
+        long full = rule.fullPriceUnits();
+        long step = rule.stepUnits();
+        if (step <= 0) return base.multiply(BigDecimal.valueOf(amount));
+
         long remaining = amount;
         long cursor = sold;
         BigDecimal gross = BigDecimal.ZERO;
         while (remaining > 0) {
             BigDecimal unit = marketUnitPrice(material, cursor);
             long nextBoundary;
-            if (cursor < marketFreeUnits) {
-                nextBoundary = marketFreeUnits;
+            if (cursor < full) {
+                nextBoundary = full;
             } else {
-                long stepIndex = (cursor - marketFreeUnits) / marketStepUnits;
-                nextBoundary = marketFreeUnits + Math.multiplyExact(stepIndex + 1L, marketStepUnits);
+                long stepIndex = (cursor - full) / step;
+                nextBoundary = full + Math.multiplyExact(stepIndex + 1L, step);
             }
             long chunk = Math.min(remaining, Math.max(1L, nextBoundary - cursor));
             gross = gross.add(unit.multiply(BigDecimal.valueOf(chunk)));
@@ -562,6 +634,89 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private void loadRemoteShop() {
         loadRemoteFile(shopUrl, "shop.txt", shopPrices);
+    }
+
+    private void loadRemoteMarketRules() {
+        if (marketRulesUrl.isBlank()) return;
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                String url = marketRulesUrl + (marketRulesUrl.contains("?") ? "&" : "?")
+                        + "cacheBust=" + System.currentTimeMillis();
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .timeout(Duration.ofSeconds(timeout()))
+                        .header("Accept", "text/plain")
+                        .header("Cache-Control", "no-cache")
+                        .GET()
+                        .build();
+                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    getLogger().warning("Could not load remote market rules (HTTP " + response.statusCode()
+                            + "). Keeping bundled rules.");
+                    return;
+                }
+
+                Map<Material, MarketRule> loaded = parseMarketRules(response.body(), "market.txt");
+                Bukkit.getScheduler().runTask(this, () -> {
+                    if (!loaded.isEmpty()) {
+                        marketRules.clear();
+                        marketRules.putAll(loaded);
+                        getLogger().info("Loaded " + marketRules.size() + " market rules from GitHub.");
+                    }
+                });
+            } catch (Exception e) {
+                getLogger().warning("Could not load remote market rules: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+            }
+        });
+    }
+
+    private Map<Material, MarketRule> parseMarketRules(String text, String label) {
+        Map<Material, MarketRule> loaded = new HashMap<>();
+        MarketRule parsedDefault = null;
+
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            int separator = line.indexOf('=');
+            if (separator <= 0) continue;
+
+            String key = line.substring(0, separator).trim().toUpperCase(Locale.ROOT);
+            String[] parts = line.substring(separator + 1).trim().split(",");
+            if (parts.length != 4) {
+                getLogger().warning("Ignoring invalid market rule in " + label + ": " + rawLine);
+                continue;
+            }
+
+            try {
+                long full = Long.parseLong(parts[0].trim());
+                long step = Long.parseLong(parts[1].trim());
+                BigDecimal drop = new BigDecimal(parts[2].trim());
+                BigDecimal floor = new BigDecimal(parts[3].trim());
+
+                if (full < 1 || step < 1 || drop.signum() < 0 || drop.compareTo(new BigDecimal("0.99")) > 0
+                        || floor.signum() < 0) {
+                    throw new IllegalArgumentException("values out of range");
+                }
+
+                MarketRule rule = new MarketRule(full, step, drop, floor);
+                if (key.equals("DEFAULT")) parsedDefault = rule;
+                else {
+                    Material material = Material.matchMaterial(key);
+                    if (material == null) {
+                        getLogger().warning("Ignoring unknown market material in " + label + ": " + key);
+                        continue;
+                    }
+                    loaded.put(material, rule);
+                }
+            } catch (Exception e) {
+                getLogger().warning("Ignoring invalid market rule in " + label + ": " + rawLine);
+            }
+        }
+
+        if (parsedDefault != null) defaultMarketRule = parsedDefault;
+        return loaded;
     }
 
     private void loadRemoteFile(String fileUrl, String label, Map<Material, Long> destination) {
@@ -1008,8 +1163,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 if (args[0].equalsIgnoreCase("reload")) {
                     loadSettings();
+                    loadBundledMarketRules();
                     loadRemotePrices();
                     loadRemoteShop();
+                    loadRemoteMarketRules();
                     sender.sendMessage("§aCoolWips Economy reload started.");
                     return true;
                 }
@@ -2971,6 +3128,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Full-price volume per item: §f" + marketFreeUnits + " units/day");
         sender.sendMessage("§7Price drop per step: §f" + marketDropPercent.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%");
         sender.sendMessage("§7Minimum market price: §f$" + marketMinPrice.stripTrailingZeros().toPlainString());
+        sender.sendMessage("§7Custom market rules: §f" + marketRules.size());
+        sender.sendMessage("§7Market rules URL: §f" + marketRulesUrl);
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
 
