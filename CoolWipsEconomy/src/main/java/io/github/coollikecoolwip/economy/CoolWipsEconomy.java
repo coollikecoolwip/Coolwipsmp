@@ -1790,6 +1790,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return true;
                 }
 
+                if (args[0].equalsIgnoreCase("market")) {
+                    marketAdmin(sender, args, false);
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("resetmarket")) {
+                    marketAdmin(sender, args, true);
+                    return true;
+                }
+
                 if (args[0].equalsIgnoreCase("reload")) {
                     loadSettings();
                     loadBundledMarketRules();
@@ -2353,9 +2363,105 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void marketAdmin(CommandSender sender, String[] args, boolean reset) {
+        if (!sender.isOp()) {
+            sender.sendMessage("§cOnly server operators can use market administration.");
+            return;
+        }
+        if (args.length < 2) {
+            sender.sendMessage(reset
+                    ? "§e/cweconomy resetmarket <player> [item]"
+                    : "§e/cweconomy market <player> [item]");
+            return;
+        }
+
+        Player target = Bukkit.getPlayerExact(args[1]);
+        if (target == null) {
+            sender.sendMessage("§cThat player must be online.");
+            return;
+        }
+
+        UUID uuid = target.getUniqueId();
+        marketLock.lock();
+        try {
+            refreshMarketDayLocked();
+            Map<Material, Long> sold = marketSoldToday.getOrDefault(uuid, Collections.emptyMap());
+            Map<Material, Long> peak = marketPeakSoldToday.getOrDefault(uuid, Collections.emptyMap());
+
+            if (reset) {
+                if (args.length >= 3) {
+                    Material material = matchMaterial(String.join("_",
+                            Arrays.copyOfRange(args, 2, args.length)));
+                    if (material == null) {
+                        sender.sendMessage("§cUnknown item.");
+                        return;
+                    }
+
+                    Map<Material, Long> soldMap = marketSoldToday.get(uuid);
+                    Map<Material, Long> peakMap = marketPeakSoldToday.get(uuid);
+                    if (soldMap != null) soldMap.remove(material);
+                    if (peakMap != null) peakMap.remove(material);
+                    if (soldMap != null && soldMap.isEmpty()) marketSoldToday.remove(uuid);
+                    if (peakMap != null && peakMap.isEmpty()) marketPeakSoldToday.remove(uuid);
+
+                    saveMarketLedgerLocked();
+                    sender.sendMessage("§aReset today's market volume for §f" + target.getName()
+                            + " §7— §f" + pretty(material) + "§a.");
+                } else {
+                    marketSoldToday.remove(uuid);
+                    marketPeakSoldToday.remove(uuid);
+                    saveMarketLedgerLocked();
+                    sender.sendMessage("§aReset today's entire market volume for §f" + target.getName() + "§a.");
+                }
+                return;
+            }
+
+            if (args.length >= 3) {
+                Material material = matchMaterial(String.join("_",
+                        Arrays.copyOfRange(args, 2, args.length)));
+                if (material == null) {
+                    sender.sendMessage("§cUnknown item.");
+                    return;
+                }
+
+                long soldAmount = sold.getOrDefault(material, 0L);
+                long peakAmount = peak.getOrDefault(material, 0L);
+                BigDecimal current = currentSellPrice(uuid, material);
+                sender.sendMessage("§6Market: §f" + target.getName() + " §7/ §f" + pretty(material));
+                sender.sendMessage("§7Sold today: §f" + soldAmount);
+                sender.sendMessage("§7Peak volume: §f" + peakAmount);
+                sender.sendMessage("§7Current sell price: §a$" +
+                        (current == null ? "N/A" : current.stripTrailingZeros().toPlainString()));
+                return;
+            }
+
+            List<Map.Entry<Material, Long>> entries = new ArrayList<>(peak.entrySet());
+            entries.sort((a, b) -> Long.compare(b.getValue(), a.getValue()));
+            sender.sendMessage("§6Market: §f" + target.getName() + " §7(top 10 peak volumes)");
+            if (entries.isEmpty()) {
+                sender.sendMessage("§7No market volume recorded today.");
+                return;
+            }
+
+            for (int i = 0; i < Math.min(10, entries.size()); i++) {
+                Material material = entries.get(i).getKey();
+                long amount = entries.get(i).getValue();
+                BigDecimal current = currentSellPrice(uuid, material);
+                sender.sendMessage("§f" + pretty(material) + " §7— " + amount + " units §7at §a$" +
+                        (current == null ? "N/A" : current.stripTrailingZeros().toPlainString()) + "§7 each");
+            }
+        } finally {
+            marketLock.unlock();
+        }
+    }
+
     private void economyHelp(CommandSender sender) {
         sender.sendMessage("§e/cweconomy reload §7- reload prices/shop/config");
         sender.sendMessage("§e/cweconomy status §7- test API");
+        sender.sendMessage("§e/cweconomy stats §7- view today's economy flows");
+        sender.sendMessage("§e/cweconomy audit §7- run economy integrity audit");
+        sender.sendMessage("§e/cweconomy market <player> [item] §7- inspect a player's market");
+        sender.sendMessage("§e/cweconomy resetmarket <player> [item] §7- reset market volume");
         sender.sendMessage("§e/cweconomy maintenance §7- manage sale maintenance");
     }
 
@@ -3895,12 +4001,24 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         if (name.equals("cweconomy") && args.length == 1) {
-            return List.of("reload", "status", "stats", "audit", "maintenance");
+            return List.of("reload", "status", "stats", "audit", "market", "resetmarket", "maintenance");
         }
 
         if (name.equals("cweconomy") && args.length == 2
                 && args[0].equalsIgnoreCase("maintenance")) {
             return List.of("on", "off", "block", "unblock", "status");
+        }
+
+        if (name.equals("cweconomy") && args.length == 2
+                && (args[0].equalsIgnoreCase("market") || args[0].equalsIgnoreCase("resetmarket"))) {
+            return Bukkit.getOnlinePlayers().stream().map(Player::getName).sorted().toList();
+        }
+
+        if (name.equals("cweconomy") && args.length == 3
+                && (args[0].equalsIgnoreCase("market") || args[0].equalsIgnoreCase("resetmarket"))) {
+            String query = args[2].toUpperCase(Locale.ROOT);
+            return prices.keySet().stream().map(Enum::name)
+                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
         }
 
         return List.of();
