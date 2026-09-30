@@ -701,7 +701,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 else soldMap.put(sale.material(), restored);
                 if (soldMap.isEmpty()) marketSoldToday.remove(sale.owner());
             }
-            saveMarketLedgerLocked();
+            requestMarketLedgerSaveLocked();
         } finally {
             marketLock.unlock();
         }
