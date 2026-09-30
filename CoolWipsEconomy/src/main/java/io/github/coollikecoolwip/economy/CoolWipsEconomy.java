@@ -1214,9 +1214,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 destination.clear();
                 destination.putAll(loaded);
-                validateCraftingEconomy();
-                validateShopPrices();
-                getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
+                Bukkit.getScheduler().runTask(this, () -> {
+                    validateCraftingEconomy();
+                    validateShopPrices();
+                    getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
+                });
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
