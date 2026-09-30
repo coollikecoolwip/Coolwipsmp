@@ -796,11 +796,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final long payout = bounty.amount();
         final String targetName = bounty.targetName();
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult result = api("PATCH", userUrl(killerDiscord),
-                    "{\"bank\":" + payout + ",\"reason\":\"" +
-                            json("CoolWips SMP bounty claimed on " + targetName) + "\"}");
+            BankMutationResult result = changeBank(killerDiscord, payout,
+                    "CoolWips SMP bounty claimed on " + targetName, null);
 
-            if (!success(result)) {
+            if (result.state() == BankMutationState.NOT_APPLIED) {
                 Bukkit.getScheduler().runTask(this, () -> {
                     bountyStateLock.lock();
                     try {
@@ -814,7 +813,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     } finally {
                         bountyStateLock.unlock();
                     }
-                    killer.sendMessage("§cBounty payout failed (HTTP " + result.status + "). The bounty was restored.");
+                    killer.sendMessage("§cBounty payout failed. The bounty was restored.");
+                    killerLock.unlock();
+                });
+                return;
+            }
+
+            if (result.state() == BankMutationState.UNKNOWN) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    getLogger().severe("Bounty payout for " + targetName + " could not be verified. " +
+                            "The bounty was not automatically reissued to prevent a duplicate payout.");
+                    killer.sendMessage("§cBounty payout could not be verified. Do not retry; contact staff.");
                     killerLock.unlock();
                 });
                 return;
@@ -1066,12 +1075,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final long finalPayout = payout;
         final int finalTotalItems = totalItems;
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\"bank\":" + finalPayout + ",\"reason\":\"" +
-                            json("CoolWips SMP automatic sell chest") + "\"}");
+            BankMutationResult result = changeBank(discordId, finalPayout,
+                    "CoolWips SMP automatic sell chest", null);
             Bukkit.getScheduler().runTask(this, () -> {
-                if (!success(result)) {
+                if (result.state() == BankMutationState.NOT_APPLIED) {
                     restoreChestItems(inventory, removed);
+                    playerLock.unlock();
+                    lock.unlock();
+                    return;
+                }
+
+                if (result.state() == BankMutationState.UNKNOWN) {
+                    getLogger().severe("Sell chest payout could not be verified for " + info.owner() +
+                            ". Items were not automatically restored to prevent a duplicate sale.");
                     playerLock.unlock();
                     lock.unlock();
                     return;
@@ -1343,22 +1359,33 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult result = api("PATCH", userUrl(discordId),
-                    "{\"bank\":" + finalMoney + ",\"reason\":\"" + json(reason) + "\"}");
+            Long before = bankBalance(discordId);
+            if (before == null) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    if (p.isOnline()) restoreItems(p, removed);
+                    else if (returnLocation.getWorld() != null)
+                        for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
+                    lock.unlock();
+                    if (p.isOnline()) p.sendMessage("§cSale cancelled. Your balance could not be verified.");
+                });
+                return;
+            }
+
+            BankMutationResult mutation = changeBank(discordId, finalMoney, reason, before);
 
             Bukkit.getScheduler().runTask(this, () -> {
-                if (!success(result)) {
-                    if (p.isOnline()) {
-                        restoreItems(p, removed);
-                    } else if (returnLocation.getWorld() != null) {
-                        for (ItemStack item : removed) {
-                            returnLocation.getWorld().dropItemNaturally(returnLocation, item);
-                        }
-                    }
+                if (mutation.state() == BankMutationState.NOT_APPLIED) {
+                    if (p.isOnline()) restoreItems(p, removed);
+                    else if (returnLocation.getWorld() != null)
+                        for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
                     lock.unlock();
-                    if (p.isOnline()) {
-                        p.sendMessage("§cSale cancelled. UnbelievaBoat HTTP " + result.status + ". Your items were returned.");
-                    }
+                    if (p.isOnline()) p.sendMessage("§cSale cancelled. No money was added; your items were returned.");
+                    return;
+                }
+
+                if (mutation.state() == BankMutationState.UNKNOWN) {
+                    lock.unlock();
+                    if (p.isOnline()) p.sendMessage("§cSale could not be verified. Do not retry; contact staff.");
                     return;
                 }
 
@@ -1499,21 +1526,27 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
 
-            HttpResult debit = api("PATCH", userUrl(senderDiscord),
-                    "{\"bank\":" + (-finalAmount) + ",\"reason\":\"" +
-                            json("CoolWips SMP player payment to " + recipient.getName()) + "\"}");
+            BankMutationResult debit = changeBank(senderDiscord, -finalAmount,
+                    "CoolWips SMP player payment to " + recipient.getName(), balance);
 
-            if (!success(debit)) {
+            if (debit.state() == BankMutationState.NOT_APPLIED) {
                 unlockOnMainThread(first, second);
                 Bukkit.getScheduler().runTask(this, () ->
-                        sender.sendMessage("§cPayment cancelled. UnbelievaBoat HTTP " + debit.status + "."));
+                        sender.sendMessage("§cPayment cancelled. No money was removed."));
                 return;
             }
 
-            Long remainingBalance = parseBank(debit.body);
+            if (debit.state() == BankMutationState.UNKNOWN) {
+                unlockOnMainThread(first, second);
+                Bukkit.getScheduler().runTask(this, () ->
+                        sender.sendMessage("§cPayment could not be verified. Do not retry; contact staff."));
+                return;
+            }
+
+            Long remainingBalance = debit.balance();
             if (remainingBalance == null || remainingBalance < 0) {
                 Bukkit.getScheduler().runTask(this, () -> {
-                    sender.sendMessage("§cPayment cancelled because it would put your balance below $0. Reversing your payment...");
+                    sender.sendMessage("§cPayment cancelled because your balance could not be verified safely. Reversal required.");
                     reverseMoney(senderDiscord, finalAmount,
                             "CoolWips SMP player payment negative-balance safeguard",
                             sender, first, second);
@@ -1522,17 +1555,25 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
 
             Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                HttpResult credit = api("PATCH", userUrl(recipientDiscord),
-                        "{\"bank\":" + finalAmount + ",\"reason\":\"" +
-                                json("CoolWips SMP player payment from " + sender.getName()) + "\"}");
+                BankMutationResult credit = changeBank(recipientDiscord, finalAmount,
+                        "CoolWips SMP player payment from " + sender.getName(), null);
 
-                if (!success(credit)) {
+                if (credit.state() == BankMutationState.NOT_APPLIED) {
                     Bukkit.getScheduler().runTask(this, () -> {
                         sender.sendMessage("§cPayment failed while crediting the recipient. Your payment is being reversed.");
                         recipient.sendMessage("§cA payment from §f" + sender.getName() + "§c could not be completed.");
                         reverseMoney(senderDiscord, finalAmount,
                                 "CoolWips SMP player payment reversal",
                                 sender, first, second);
+                    });
+                    return;
+                }
+
+                if (credit.state() == BankMutationState.UNKNOWN) {
+                    unlockOnMainThread(first, second);
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        sender.sendMessage("§cPayment status could not be verified. Do not retry; contact staff.");
+                        recipient.sendMessage("§cA payment from §f" + sender.getName() + "§c has an uncertain status. Contact staff.");
                     });
                     return;
                 }
@@ -1592,25 +1633,20 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
 
-            HttpResult debit = api("PATCH", userUrl(posterDiscord),
-                    "{\"bank\":" + (-finalAmount) + ",\"reason\":\"" +
-                            json("CoolWips SMP bounty placed on " + finalTargetName) + "\"}");
+            BankMutationResult debit = changeBank(posterDiscord, -finalAmount,
+                    "CoolWips SMP bounty placed on " + finalTargetName, balance);
 
-            if (!success(debit)) {
+            if (debit.state() == BankMutationState.NOT_APPLIED) {
                 unlockOnMainThread(lock);
                 Bukkit.getScheduler().runTask(this, () ->
-                        poster.sendMessage("§cBounty cancelled. UnbelievaBoat HTTP " + debit.status + "."));
+                        poster.sendMessage("§cBounty cancelled. No money was removed."));
                 return;
             }
 
-            Long remainingBalance = parseBank(debit.body);
-            if (remainingBalance == null || remainingBalance < 0) {
-                Bukkit.getScheduler().runTask(this, () -> {
-                    poster.sendMessage("§cBounty cancelled because your balance would go below $0. Reversing your payment...");
-                    reverseMoney(posterDiscord, finalAmount,
-                            "CoolWips SMP bounty negative-balance safeguard",
-                            poster, lock);
-                });
+            if (debit.state() == BankMutationState.UNKNOWN) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        poster.sendMessage("§cBounty could not be verified. Do not retry; contact staff."));
                 return;
             }
 
@@ -1818,23 +1854,32 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return;
             }
 
-            HttpResult debit = api("PATCH", userUrl(buyerDiscord),
-                    "{\"bank\":" + (-total) + ",\"reason\":\"Player item trade purchase\"}");
+            BankMutationResult debit = changeBank(buyerDiscord, -total,
+                    "Player item trade purchase", balance);
 
-            if (!success(debit)) {
+            if (debit.state() == BankMutationState.NOT_APPLIED) {
                 unlockOnMainThread(first, second);
                 Bukkit.getScheduler().runTask(this, () -> {
-                    buyer.sendMessage("§cTrade cancelled. Buyer payment failed (HTTP " + debit.status + ").");
-                    seller.sendMessage("§cTrade cancelled because the buyer's payment failed.");
+                    buyer.sendMessage("§cTrade cancelled. No money was removed.");
+                    seller.sendMessage("§cTrade cancelled because the buyer payment did not apply.");
                 });
                 return;
             }
 
-            Long remainingTradeBalance = parseBank(debit.body);
+            if (debit.state() == BankMutationState.UNKNOWN) {
+                unlockOnMainThread(first, second);
+                Bukkit.getScheduler().runTask(this, () -> {
+                    buyer.sendMessage("§cTrade payment could not be verified. Do not retry; contact staff.");
+                    seller.sendMessage("§cTrade payment status could not be verified. Contact staff.");
+                });
+                return;
+            }
+
+            Long remainingTradeBalance = debit.balance();
             if (remainingTradeBalance == null || remainingTradeBalance < 0) {
                 Bukkit.getScheduler().runTask(this, () -> {
-                    buyer.sendMessage("§cTrade cancelled because it would put your balance below $0. Reversing your payment...");
-                    seller.sendMessage("§cTrade cancelled because the buyer's balance would go below $0.");
+                    buyer.sendMessage("§cTrade cancelled because your balance could not be verified safely. Reversal required.");
+                    seller.sendMessage("§cTrade cancelled because the buyer balance could not be verified.");
                     reverseMoney(buyerDiscord, total, "Player item trade negative-balance safeguard", null, first, second);
                 });
                 return;
@@ -1869,15 +1914,24 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 }
 
                 Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                    HttpResult credit = api("PATCH", userUrl(sellerDiscord),
-                            "{\"bank\":" + total + ",\"reason\":\"Player item trade sale\"}");
+                    BankMutationResult credit = changeBank(sellerDiscord, total,
+                            "Player item trade sale", null);
 
-                    if (!success(credit)) {
+                    if (credit.state() == BankMutationState.NOT_APPLIED) {
                         Bukkit.getScheduler().runTask(this, () -> {
                             restoreItems(seller, tradedItems);
                             buyer.sendMessage("§cSeller payment failed. Your payment is being reversed.");
                             seller.sendMessage("§cTrade payment failed. The items were returned.");
                             reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
+                        });
+                        return;
+                    }
+
+                    if (credit.state() == BankMutationState.UNKNOWN) {
+                        unlockOnMainThread(first, second);
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            buyer.sendMessage("§cSeller payment status could not be verified. Do not retry; contact staff.");
+                            seller.sendMessage("§cTrade payment status could not be verified. Contact staff.");
                         });
                         return;
                     }
@@ -1974,20 +2028,26 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
 
             // UnbelievaBoat treats negative bank as a withdrawal from the user's bank balance.
-            HttpResult debit = api("PATCH", userUrl(discordId),
-                    "{\"bank\":" + (-money) + ",\"reason\":\"" + json(buyReason) + "\"}");
+            BankMutationResult debit = changeBank(discordId, -money, buyReason, balance);
 
-            if (!success(debit)) {
+            if (debit.state() == BankMutationState.NOT_APPLIED) {
                 unlockOnMainThread(lock);
                 Bukkit.getScheduler().runTask(this, () ->
-                        p.sendMessage("§cPurchase cancelled. UnbelievaBoat HTTP " + debit.status + "."));
+                        p.sendMessage("§cPurchase cancelled. No money was removed."));
                 return;
             }
 
-            Long remainingBalance = parseBank(debit.body);
+            if (debit.state() == BankMutationState.UNKNOWN) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cPurchase could not be verified. Do not retry; contact staff."));
+                return;
+            }
+
+            Long remainingBalance = debit.balance();
             if (remainingBalance == null || remainingBalance < 0) {
                 Bukkit.getScheduler().runTask(this, () -> {
-                    p.sendMessage("§cPurchase cancelled because it would put your balance below $0. Reversing your payment...");
+                    p.sendMessage("§cPurchase cancelled because your balance could not be verified safely. Reversal required.");
                     reverseMoney(discordId, money, "Shop purchase negative-balance safeguard", p, lock);
                 });
                 return;
@@ -2090,16 +2150,63 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }, periodTicks, periodTicks);
     }
 
+    private enum BankMutationState {
+        APPLIED, NOT_APPLIED, UNKNOWN
+    }
+
+    private record BankMutationResult(BankMutationState state, Long balance) {}
+
+    private BankMutationResult changeBank(String discordId, long delta, String mutationReason,
+                                          Long expectedBefore) {
+        Long before = expectedBefore == null ? bankBalance(discordId) : expectedBefore;
+        if (before == null) return new BankMutationResult(BankMutationState.UNKNOWN, null);
+
+        long expectedAfter;
+        try {
+            expectedAfter = Math.addExact(before, delta);
+        } catch (ArithmeticException e) {
+            getLogger().severe("Rejected bank mutation because the expected balance would overflow for " + discordId + ".");
+            return new BankMutationResult(BankMutationState.UNKNOWN, before);
+        }
+
+        HttpResult result = api("PATCH", userUrl(discordId),
+                "{\"bank\":" + delta + ",\"reason\":\"" + json(mutationReason) + "\"}");
+
+        Long reported = parseBank(result.body);
+        if (success(result) && reported != null) {
+            if (reported == expectedAfter) return new BankMutationResult(BankMutationState.APPLIED, reported);
+            if (reported == before) return new BankMutationResult(BankMutationState.NOT_APPLIED, reported);
+        }
+
+        // A timeout or non-2xx response does NOT prove that the PATCH was rejected.
+        // Verify the account before deciding whether to reverse, restore, or retry.
+        Long verified = bankBalance(discordId);
+        if (verified != null) {
+            if (verified == expectedAfter) return new BankMutationResult(BankMutationState.APPLIED, verified);
+            if (verified == before) return new BankMutationResult(BankMutationState.NOT_APPLIED, verified);
+        }
+
+        getLogger().severe("Bank mutation could not be verified for " + discordId
+                + " (delta " + delta + ", HTTP " + result.status + "). No automatic retry or reversal will be attempted.");
+        return new BankMutationResult(BankMutationState.UNKNOWN, verified);
+    }
+
     private void reverseMoney(String discordId, long money, String reversalReason,
                               Player p, ReentrantLock... locksToUnlock) {
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult reverse = api("PATCH", userUrl(discordId),
-                    "{\"bank\":" + money + ",\"reason\":\"" + json(reversalReason) + "\"}");
+            Long before = bankBalance(discordId);
+            if (before == null) {
+                getLogger().severe("Could not verify the balance before reversing $" + money + " for "
+                        + (p == null ? "an economy transaction" : p.getName()) + ". No reversal was attempted.");
+                unlockOnMainThread(locksToUnlock);
+                return;
+            }
 
-            if (!success(reverse)) {
-                getLogger().severe("Could not reverse $" + money + " for "
+            BankMutationResult reversal = changeBank(discordId, money, reversalReason, before);
+            if (reversal.state() == BankMutationState.UNKNOWN) {
+                getLogger().severe("Reversal of $" + money + " could not be verified for "
                         + (p == null ? "an economy transaction" : p.getName())
-                        + ". UnbelievaBoat HTTP " + reverse.status);
+                        + ". No automatic retry will be attempted.");
             }
             unlockOnMainThread(locksToUnlock);
         });
