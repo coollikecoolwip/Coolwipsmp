@@ -900,12 +900,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     || playerCreated >= anomalyPlayerMoneyCreatedLimit
                     || playerSold >= anomalyPlayerItemsSoldLimit)) {
                 economyStatsData.set(prefix + ".flagged_today", true);
-                String reason = money >= anomalySingleSaleLimit
+                String flagReason = money >= anomalySingleSaleLimit
                         ? "single economy event $" + money
                         : playerCreated >= anomalyPlayerMoneyCreatedLimit
                         ? "daily money created $" + playerCreated
                         : "daily items sold " + playerSold;
-                String flag = playerName + " (" + uuid + "): " + reason;
+                String flag = playerName + " (" + uuid + "): " + flagReason;
                 economyStatsData.set("flags." + uuid, flag);
                 getLogger().warning("ECONOMY_FLAG | " + flag);
             }
@@ -913,6 +913,80 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         } finally {
             economyStatsLock.unlock();
         }
+        recordEconomyLedger(uuid, playerName, material, amount, money,
+                created ? "CREATE" : "REMOVE", category);
+    }
+
+    private void recordEconomyMoneyOnly(UUID uuid, String playerName, long money,
+                                         String category, boolean created) {
+        if (uuid == null || money <= 0) return;
+        economyStatsLock.lock();
+        try {
+            refreshEconomyStatsDayLocked();
+            String prefix = "players." + uuid;
+            String totalPath = created ? "money_created" : "money_removed";
+            String categoryRoot = created ? "sources." : "sinks.";
+            String playerPath = created ? ".created" : ".removed";
+            economyStatsData.set(totalPath,
+                    statAdd(economyStatsData.getLong(totalPath, 0L), money));
+            economyStatsData.set(categoryRoot + category,
+                    statAdd(economyStatsData.getLong(categoryRoot + category, 0L), money));
+            economyStatsData.set(prefix + playerPath,
+                    statAdd(economyStatsData.getLong(prefix + playerPath, 0L), money));
+            economyStatsData.set(prefix + ".name", playerName);
+            economyStatsData.set(prefix + ".last_event", System.currentTimeMillis());
+            saveEconomyStatsLocked();
+        } finally {
+            economyStatsLock.unlock();
+        }
+        recordEconomyLedger(uuid, playerName, null, 0, money,
+                created ? "CREATE_MONEY" : "REMOVE_MONEY", category);
+    }
+
+    private void recordEconomyTransfer(UUID fromUuid, String fromName, UUID toUuid, String toName,
+                                       long money, String category) {
+        if (money <= 0) return;
+        economyStatsLock.lock();
+        try {
+            refreshEconomyStatsDayLocked();
+            economyStatsData.set("money_transferred",
+                    statAdd(economyStatsData.getLong("money_transferred", 0L), money));
+            economyStatsData.set("transfers",
+                    statAdd(economyStatsData.getLong("transfers", 0L), 1L));
+            economyStatsData.set("transfer_categories." + category,
+                    statAdd(economyStatsData.getLong("transfer_categories." + category, 0L), money));
+
+            if (fromUuid != null) {
+                String from = "players." + fromUuid;
+                economyStatsData.set(from + ".name", fromName);
+                economyStatsData.set(from + ".transferred_out",
+                        statAdd(economyStatsData.getLong(from + ".transferred_out", 0L), money));
+            }
+            if (toUuid != null) {
+                String to = "players." + toUuid;
+                economyStatsData.set(to + ".name", toName);
+                economyStatsData.set(to + ".transferred_in",
+                        statAdd(economyStatsData.getLong(to + ".transferred_in", 0L), money));
+            }
+
+            if (fromUuid != null) {
+                String prefix = "players." + fromUuid;
+                long transferredOut = economyStatsData.getLong(prefix + ".transferred_out", 0L);
+                if (!economyStatsData.getBoolean(prefix + ".transfer_flagged_today", false)
+                        && transferredOut >= anomalyPlayerMoneyTransferredLimit) {
+                    economyStatsData.set(prefix + ".transfer_flagged_today", true);
+                    String flag = (fromName == null ? "unknown" : fromName) + " (" + fromUuid +
+                            "): daily money transferred out $" + transferredOut;
+                    economyStatsData.set("flags.transfer." + fromUuid, flag);
+                    getLogger().warning("ECONOMY_FLAG | " + flag);
+                }
+            }
+            saveEconomyStatsLocked();
+        } finally {
+            economyStatsLock.unlock();
+        }
+        recordEconomyLedger(fromUuid, fromName, null, 0, money, "TRANSFER_OUT", category);
+        recordEconomyLedger(toUuid, toName, null, 0, money, "TRANSFER_IN", category);
     }
 
     private void economyStats(CommandSender sender) {
