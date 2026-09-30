@@ -26,9 +26,14 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.NamespacedKey;
 import org.bukkit.event.block.Action;
+import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.io.File;
+import java.io.IOException;
+import java.time.LocalDate;
+import java.time.ZoneId;
 import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
@@ -68,6 +73,56 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Set<String> scheduledAutomaticSellChestRetries = ConcurrentHashMap.newKeySet();
     private static final long AUTOMATIC_SELL_CHEST_COOLDOWN_MS = 30_000L;
 
+    private static final long DEFAULT_FARM_INCOME_CAP = 5000L;
+    private static final Set<Material> FARM_INCOME_MATERIALS = EnumSet.of(
+            Material.WHEAT, Material.WHEAT_SEEDS, Material.CARROT, Material.POTATO, Material.BEETROOT,
+            Material.MELON_SLICE, Material.MELON, Material.PUMPKIN, Material.SUGAR_CANE, Material.BAMBOO,
+            Material.BAMBOO_BLOCK, Material.CACTUS, Material.COCOA_BEANS, Material.NETHER_WART,
+            Material.SWEET_BERRIES, Material.GLOW_BERRIES, Material.CHORUS_FRUIT, Material.CHORUS_FLOWER,
+            Material.KELP, Material.DRIED_KELP, Material.DRIED_KELP_BLOCK, Material.APPLE, Material.BREAD,
+            Material.COOKIE, Material.CAKE, Material.BAKED_POTATO,
+            Material.BEEF, Material.PORKCHOP, Material.CHICKEN, Material.MUTTON, Material.RABBIT,
+            Material.COD, Material.SALMON, Material.PUFFERFISH, Material.TROPICAL_FISH,
+            Material.COOKED_BEEF, Material.COOKED_PORKCHOP, Material.COOKED_CHICKEN, Material.COOKED_MUTTON,
+            Material.COOKED_RABBIT, Material.COOKED_COD, Material.COOKED_SALMON,
+            Material.LEATHER, Material.FEATHER, Material.EGG, Material.ROTTEN_FLESH, Material.BONE,
+            Material.BONE_MEAL, Material.ARROW, Material.STRING, Material.SPIDER_EYE, Material.GUNPOWDER,
+            Material.ENDER_PEARL, Material.BLAZE_ROD, Material.SLIME_BALL, Material.MAGMA_CREAM,
+            Material.GHAST_TEAR, Material.PHANTOM_MEMBRANE, Material.INK_SAC, Material.GLOW_INK_SAC,
+            Material.RABBIT_FOOT, Material.PRISMARINE_SHARD, Material.PRISMARINE_CRYSTALS,
+            Material.NAUTILUS_SHELL, Material.HONEYCOMB, Material.HONEY_BOTTLE, Material.HONEY_BLOCK,
+            Material.HONEYCOMB_BLOCK,
+            Material.MOSS_BLOCK, Material.MOSS_CARPET, Material.AZALEA, Material.FLOWERING_AZALEA,
+            Material.AZALEA_LEAVES, Material.FLOWERING_AZALEA_LEAVES, Material.PINK_PETALS,
+            Material.WILDFLOWERS, Material.LEAF_LITTER, Material.BUSH, Material.FIREFLY_BUSH,
+            Material.SHORT_DRY_GRASS, Material.TALL_DRY_GRASS, Material.SHORT_GRASS, Material.TALL_GRASS,
+            Material.FERN, Material.LARGE_FERN, Material.DEAD_BUSH, Material.SEAGRASS,
+            Material.SMALL_DRIPLEAF, Material.BIG_DRIPLEAF, Material.HANGING_ROOTS, Material.SPORE_BLOSSOM,
+            Material.TORCHFLOWER, Material.PITCHER_PLANT, Material.CACTUS_FLOWER,
+            Material.OPEN_EYEBLOSSOM, Material.CLOSED_EYEBLOSSOM, Material.DANDELION,
+            Material.POPPY, Material.BLUE_ORCHID, Material.ALLIUM, Material.AZURE_BLUET,
+            Material.RED_TULIP, Material.ORANGE_TULIP, Material.WHITE_TULIP, Material.PINK_TULIP,
+            Material.OXEYE_DAISY, Material.CORNFLOWER, Material.LILY_OF_THE_VALLEY,
+            Material.SUNFLOWER, Material.LILAC, Material.ROSE_BUSH, Material.PEONY,
+            Material.BROWN_MUSHROOM, Material.RED_MUSHROOM, Material.VINE, Material.GLOW_LICHEN,
+            Material.LILY_PAD, Material.SEA_PICKLE,
+            Material.WHITE_WOOL, Material.ORANGE_WOOL, Material.MAGENTA_WOOL, Material.LIGHT_BLUE_WOOL,
+            Material.YELLOW_WOOL, Material.LIME_WOOL, Material.PINK_WOOL, Material.GRAY_WOOL,
+            Material.LIGHT_GRAY_WOOL, Material.CYAN_WOOL, Material.PURPLE_WOOL, Material.BLUE_WOOL,
+            Material.BROWN_WOOL, Material.GREEN_WOOL, Material.RED_WOOL, Material.BLACK_WOOL,
+            Material.TOTEM_OF_UNDYING
+    );
+    private static final Set<String> FARM_WOOD_PREFIXES = Set.of(
+            "OAK", "SPRUCE", "BIRCH", "JUNGLE", "ACACIA", "DARK_OAK", "MANGROVE", "CHERRY",
+            "PALE_OAK", "BAMBOO", "CRIMSON", "WARPED"
+    );
+    private final Map<UUID, BigDecimal> farmIncomeUsed = new ConcurrentHashMap<>();
+    private final ReentrantLock farmIncomeLock = new ReentrantLock();
+    private File farmIncomeFile;
+    private YamlConfiguration farmIncomeData;
+    private long farmIncomeCap;
+    private String farmIncomeDay;
+
     private static final Set<String> UNSAFE_SELL_MATERIALS = Set.of(
             "BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK",
             "REPEATING_COMMAND_BLOCK", "STRUCTURE_BLOCK", "STRUCTURE_VOID",
@@ -81,6 +136,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
         sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
+        loadFarmIncomeLedger();
         Bukkit.getPluginManager().registerEvents(this, this);
 
         for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
@@ -98,6 +154,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadRemotePrices();
         loadRemoteShop();
         startNonNegativeBalanceGuard();
+    }
+
+    @Override public void onDisable() {
+        saveFarmIncomeLedger();
     }
 
     private void loadSettings() {
@@ -122,6 +182,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         maximumBounty = Math.max(minimumBounty, getConfig().getLong("settings.maximum-bounty", 1000000));
         sellTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.sell-tax", 0.05)));
         buyTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.buy-tax", 0.05)));
+        farmIncomeCap = Math.max(0L, getConfig().getLong("settings.daily-farm-income-cap", DEFAULT_FARM_INCOME_CAP));
 
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
@@ -203,6 +264,134 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         } catch (Exception e) {
             return new HttpResult(0, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
         }
+    }
+
+    private void loadFarmIncomeLedger() {
+        farmIncomeLock.lock();
+        try {
+            if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
+                getLogger().warning("Could not create plugin data folder for farm-income ledger.");
+            }
+            farmIncomeFile = new File(getDataFolder(), "farm-income.yml");
+            farmIncomeData = YamlConfiguration.loadConfiguration(farmIncomeFile);
+            farmIncomeDay = LocalDate.now(ZoneId.systemDefault()).toString();
+
+            String storedDay = farmIncomeData.getString("day", "");
+            if (!farmIncomeDay.equals(storedDay)) {
+                farmIncomeUsed.clear();
+                farmIncomeData.set("used", null);
+                farmIncomeData.set("day", farmIncomeDay);
+                saveFarmIncomeLedgerLocked();
+                return;
+            }
+
+            for (String key : farmIncomeData.getConfigurationSection("used") == null
+                    ? Collections.<String>emptyList()
+                    : farmIncomeData.getConfigurationSection("used").getKeys(false)) {
+                try {
+                    UUID uuid = UUID.fromString(key);
+                    BigDecimal used = new BigDecimal(farmIncomeData.getString("used." + key, "0"));
+                    if (used.signum() > 0) farmIncomeUsed.put(uuid, used);
+                } catch (Exception ignored) {
+                    getLogger().warning("Ignoring invalid farm-income ledger entry: " + key);
+                }
+            }
+        } finally {
+            farmIncomeLock.unlock();
+        }
+    }
+
+    private void saveFarmIncomeLedger() {
+        farmIncomeLock.lock();
+        try {
+            saveFarmIncomeLedgerLocked();
+        } finally {
+            farmIncomeLock.unlock();
+        }
+    }
+
+    private void saveFarmIncomeLedgerLocked() {
+        if (farmIncomeFile == null || farmIncomeData == null) return;
+        farmIncomeData.set("day", farmIncomeDay);
+        farmIncomeData.set("used", null);
+        for (Map.Entry<UUID, BigDecimal> entry : farmIncomeUsed.entrySet()) {
+            farmIncomeData.set("used." + entry.getKey(), entry.getValue().toPlainString());
+        }
+        try {
+            farmIncomeData.save(farmIncomeFile);
+        } catch (IOException e) {
+            getLogger().warning("Could not save farm-income ledger: " + e.getMessage());
+        }
+    }
+
+    private void refreshFarmIncomeDayLocked() {
+        String today = LocalDate.now(ZoneId.systemDefault()).toString();
+        if (today.equals(farmIncomeDay)) return;
+        farmIncomeDay = today;
+        farmIncomeUsed.clear();
+        saveFarmIncomeLedgerLocked();
+    }
+
+    private boolean isFarmIncomeMaterial(Material material) {
+        if (material == null) return false;
+        if (FARM_INCOME_MATERIALS.contains(material)) return true;
+
+        String name = material.name();
+        for (String prefix : FARM_WOOD_PREFIXES) {
+            if (name.startsWith(prefix + "_") || name.equals(prefix)) return true;
+        }
+        return name.contains("WOOL") || name.endsWith("_CARPET");
+    }
+
+    private BigDecimal remainingFarmIncome(UUID uuid) {
+        farmIncomeLock.lock();
+        try {
+            refreshFarmIncomeDayLocked();
+            BigDecimal used = farmIncomeUsed.getOrDefault(uuid, BigDecimal.ZERO);
+            BigDecimal remaining = BigDecimal.valueOf(farmIncomeCap).subtract(used);
+            return remaining.signum() > 0 ? remaining : BigDecimal.ZERO;
+        } finally {
+            farmIncomeLock.unlock();
+        }
+    }
+
+    private boolean reserveFarmIncome(UUID uuid, BigDecimal gross) {
+        if (gross == null || gross.signum() <= 0 || farmIncomeCap <= 0) return true;
+        farmIncomeLock.lock();
+        try {
+            refreshFarmIncomeDayLocked();
+            BigDecimal used = farmIncomeUsed.getOrDefault(uuid, BigDecimal.ZERO);
+            BigDecimal cap = BigDecimal.valueOf(farmIncomeCap);
+            if (used.add(gross).compareTo(cap) > 0) return false;
+            farmIncomeUsed.put(uuid, used.add(gross));
+            saveFarmIncomeLedgerLocked();
+            return true;
+        } finally {
+            farmIncomeLock.unlock();
+        }
+    }
+
+    private void releaseFarmIncome(UUID uuid, BigDecimal gross) {
+        if (gross == null || gross.signum() <= 0 || farmIncomeCap <= 0) return;
+        farmIncomeLock.lock();
+        try {
+            refreshFarmIncomeDayLocked();
+            BigDecimal used = farmIncomeUsed.getOrDefault(uuid, BigDecimal.ZERO)
+                    .subtract(gross).max(BigDecimal.ZERO);
+            if (used.signum() == 0) farmIncomeUsed.remove(uuid);
+            else farmIncomeUsed.put(uuid, used);
+            saveFarmIncomeLedgerLocked();
+        } finally {
+            farmIncomeLock.unlock();
+        }
+    }
+
+    private int farmAllowedAmount(UUID uuid, Material material, int requested, BigDecimal unit) {
+        if (!isFarmIncomeMaterial(material) || farmIncomeCap <= 0) return requested;
+        BigDecimal remaining = remainingFarmIncome(uuid);
+        if (remaining.compareTo(unit) < 0) return 0;
+        BigDecimal maxAmount = remaining.divide(unit, 0, RoundingMode.FLOOR);
+        return Math.min(requested, maxAmount.min(BigDecimal.valueOf(Integer.MAX_VALUE)).intValue());
     }
 
     private void loadRemotePrices() {
@@ -992,6 +1181,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
         BigDecimal gross = BigDecimal.ZERO;
+        BigDecimal farmGross = BigDecimal.ZERO;
+        BigDecimal remainingFarmGross = remainingFarmIncome(info.owner());
 
         // Sell up to the same per-transaction item limit used by /sell and /sellall.
         // Do not reject the entire chest just because it contains more than maxItems.
@@ -1004,6 +1195,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (remainingCapacity <= 0) break;
 
             int amount = Math.min(stack.getAmount(), remainingCapacity);
+            if (isFarmIncomeMaterial(stack.getType())) {
+                if (remainingFarmGross.compareTo(unit) < 0) continue;
+                BigDecimal allowed = remainingFarmGross.divide(unit, 0, RoundingMode.FLOOR);
+                amount = Math.min(amount, allowed.min(BigDecimal.valueOf(Integer.MAX_VALUE)).intValue());
+                if (amount <= 0) continue;
+                farmGross = farmGross.add(unit.multiply(BigDecimal.valueOf(amount)));
+                remainingFarmGross = remainingFarmGross.subtract(unit.multiply(BigDecimal.valueOf(amount)));
+            }
             try {
                 gross = gross.add(unit.multiply(BigDecimal.valueOf(amount)));
             } catch (ArithmeticException e) {
@@ -1064,8 +1263,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         inventory.setContents(contents);
 
+        if (!reserveFarmIncome(info.owner(), farmGross)) {
+            restoreChestItems(inventory, removed);
+            playerLock.unlock();
+            lock.unlock();
+            return;
+        }
+
         String discordId = linkedId(info.owner());
         if (discordId == null) {
+            releaseFarmIncome(info.owner(), farmGross);
             restoreChestItems(inventory, removed);
             playerLock.unlock();
             lock.unlock();
@@ -1079,6 +1286,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     "CoolWips SMP automatic sell chest", null);
             Bukkit.getScheduler().runTask(this, () -> {
                 if (result.state() == BankMutationState.NOT_APPLIED) {
+                    releaseFarmIncome(info.owner(), farmGross);
                     restoreChestItems(inventory, removed);
                     playerLock.unlock();
                     lock.unlock();
@@ -1304,6 +1512,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
+        int originalAmount = amount;
+        amount = farmAllowedAmount(p.getUniqueId(), material, amount, unit);
+        if (amount < 1) {
+            p.sendMessage("§cYour daily renewable-farm income limit of $" + money(farmIncomeCap) + " has been reached.");
+            return;
+        }
+        if (amount < originalAmount) {
+            p.sendMessage("§eDaily farm-income limit reached soon. You can sell only " + amount
+                    + "x " + pretty(material) + " in this sale.");
+        }
+
         BigDecimal gross = unit.multiply(BigDecimal.valueOf(amount));
         if (gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
             p.sendMessage("§cThat sale exceeds the $" + money(maxMoney) + " payout limit.");
@@ -1358,10 +1577,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
+        final BigDecimal finalFarmGross = isFarmIncomeMaterial(finalMaterial) ? unit.multiply(BigDecimal.valueOf(finalAmount)) : BigDecimal.ZERO;
+        if (!reserveFarmIncome(p.getUniqueId(), finalFarmGross)) {
+            restoreItems(p, removed);
+            lock.unlock();
+            p.sendMessage("§cSale cancelled. Your daily renewable-farm income limit has been reached.");
+            return;
+        }
+
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Long before = bankBalance(discordId);
             if (before == null) {
                 Bukkit.getScheduler().runTask(this, () -> {
+                    releaseFarmIncome(p.getUniqueId(), finalFarmGross);
                     if (p.isOnline()) restoreItems(p, removed);
                     else if (returnLocation.getWorld() != null)
                         for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
@@ -1375,6 +1603,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             Bukkit.getScheduler().runTask(this, () -> {
                 if (mutation.state() == BankMutationState.NOT_APPLIED) {
+                    releaseFarmIncome(p.getUniqueId(), finalFarmGross);
                     if (p.isOnline()) restoreItems(p, removed);
                     else if (returnLocation.getWorld() != null)
                         for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
@@ -2471,6 +2700,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Sell prices: §f" + prices.size());
         sender.sendMessage("§7Shop prices: §f" + shopPrices.size());
         sender.sendMessage("§7Sell maintenance: " + (sellsDisabled ? "§cBLOCKED" : "§aENABLED"));
+        sender.sendMessage("§7Daily renewable-farm cap: §f$" + money(farmIncomeCap));
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
 
