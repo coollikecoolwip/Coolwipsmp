@@ -15,6 +15,8 @@ import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.inventory.PrepareItemCraftEvent;
+import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
@@ -648,6 +650,80 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return false;
             }
         }
+    }
+
+    @EventHandler
+    public void onPrepareItemCraft(PrepareItemCraftEvent event) {
+        ItemStack result = event.getInventory().getResult();
+        if (!isCraftingConversionSafe(event.getInventory().getMatrix(), result)) {
+            event.getInventory().setResult(null);
+        }
+    }
+
+    @EventHandler
+    public void onCraftItem(CraftItemEvent event) {
+        ItemStack result = event.getRecipe() == null ? null : event.getRecipe().getResult();
+        if (!isCraftingConversionSafe(event.getInventory().getMatrix(), result)) {
+            event.setCancelled(true);
+        }
+    }
+
+    private boolean isCraftingConversionSafe(ItemStack[] matrix, ItemStack result) {
+        if (result == null || result.getType().isAir() || result.getAmount() <= 0) return true;
+
+        BigDecimal resultSell = prices.get(result.getType());
+        if (resultSell == null) return true;
+
+        BigDecimal inputBuyCost = BigDecimal.ZERO;
+        BigDecimal inputSellPayout = BigDecimal.ZERO;
+        boolean allInputsBuyable = true;
+        boolean allInputsSellable = true;
+        boolean hasInput = false;
+
+        for (ItemStack input : matrix) {
+            if (input == null || input.getType().isAir() || input.getAmount() <= 0) continue;
+            hasInput = true;
+
+            Long buyUnit = shopPrices.get(input.getType());
+            if (buyUnit == null) {
+                allInputsBuyable = false;
+            } else {
+                inputBuyCost = inputBuyCost.add(
+                        BigDecimal.valueOf(buyUnit)
+                                .multiply(BigDecimal.valueOf(input.getAmount()))
+                                .multiply(BigDecimal.ONE.add(BigDecimal.valueOf(buyTax))));
+            }
+
+            BigDecimal sellUnit = prices.get(input.getType());
+            if (sellUnit == null) {
+                allInputsSellable = false;
+            } else {
+                inputSellPayout = inputSellPayout.add(
+                        sellUnit.multiply(BigDecimal.valueOf(input.getAmount())));
+            }
+        }
+
+        if (!hasInput) return true;
+
+        BigDecimal resultGross = resultSell.multiply(BigDecimal.valueOf(result.getAmount()));
+        long resultPayout = afterTax(resultGross, sellTax);
+
+        // Block buy -> craft -> sell arbitrage.
+        if (allInputsBuyable
+                && BigDecimal.valueOf(resultPayout).compareTo(inputBuyCost) >= 0) {
+            return false;
+        }
+
+        // Block profitable item-to-item conversions, including reverse recipes
+        // such as a block being crafted back into nine ingots.
+        if (allInputsSellable) {
+            long inputPayout = afterTax(inputSellPayout, sellTax);
+            if (resultPayout >= inputPayout) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     @EventHandler
