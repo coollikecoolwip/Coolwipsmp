@@ -19,10 +19,10 @@ settings:
   buy-tax: 0.05
   # Renewable items keep full value for normal volumes. Heavy daily volume lowers
   # that specific item's sell price until it reaches the configured floor.
-  market-full-price-units: 512
-  market-step-units: 512
+  market-full-price-units: 2048
+  market-step-units: 2048
   market-price-drop: 0.10
-  market-min-multiplier: 0.25
+  market-min-price: 90
 prices:
   DIAMOND: 250
   IRON_INGOT: 25
