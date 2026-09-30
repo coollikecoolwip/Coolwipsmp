@@ -3194,15 +3194,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        long baseCost;
+        long cost;
         try {
-            baseCost = Math.multiplyExact(unit, requested);
+            BigDecimal costDecimal = BigDecimal.valueOf(unit)
+                    .multiply(BigDecimal.valueOf(requested))
+                    .multiply(BigDecimal.ONE.add(BigDecimal.valueOf(buyTax)));
+            cost = costDecimal.setScale(0, RoundingMode.HALF_UP).longValueExact();
         } catch (ArithmeticException e) {
             p.sendMessage("§cThat purchase is too large.");
             return;
         }
-
-        long cost = Math.max(0, Math.round(baseCost * (1.0 + buyTax)));
 
         if (cost > maxMoney) {
             p.sendMessage("§cThat purchase exceeds the $" + maxMoney + " transaction limit.");
