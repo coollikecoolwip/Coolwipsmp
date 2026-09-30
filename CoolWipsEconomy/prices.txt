@@ -1,16 +1,16 @@
 # CoolWips Economy prices
 # Bucket values are kept below the value of their ingredients to prevent container/filling arbitrage.
-BUCKET=24
-WATER_BUCKET=24
-LAVA_BUCKET=24
-MILK_BUCKET=24
-POWDER_SNOW_BUCKET=24
-COD_BUCKET=28
-SALMON_BUCKET=28
-PUFFERFISH_BUCKET=30
-TROPICAL_FISH_BUCKET=29
-AXOLOTL_BUCKET=24
-TADPOLE_BUCKET=24
+BUCKET=26
+WATER_BUCKET=28
+LAVA_BUCKET=28
+MILK_BUCKET=30
+POWDER_SNOW_BUCKET=29
+COD_BUCKET=31
+SALMON_BUCKET=31
+PUFFERFISH_BUCKET=33
+TROPICAL_FISH_BUCKET=32
+AXOLOTL_BUCKET=36
+TADPOLE_BUCKET=31
 
 # Purely renewable/AFK farm outputs are intentionally low so they are not dominant money makers.
 # Crafting arbitrage is avoided: crafted outputs should not exceed their ingredient value.
