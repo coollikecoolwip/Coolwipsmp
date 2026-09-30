@@ -17,8 +17,12 @@ settings:
   maximum-bounty: 1000000
   sell-tax: 0.05
   buy-tax: 0.05
-  # Shared daily cap for common renewable/farm output sales. $0 disables the cap.
-  daily-farm-income-cap: 5000
+  # Renewable items keep full value for normal volumes. Heavy daily volume lowers
+  # that specific item's sell price until it reaches the configured floor.
+  market-full-price-units: 512
+  market-step-units: 512
+  market-price-drop: 0.10
+  market-min-multiplier: 0.25
 prices:
   DIAMOND: 250
   IRON_INGOT: 25
