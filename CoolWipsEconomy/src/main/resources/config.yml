@@ -25,9 +25,15 @@ settings:
   market-price-drop: 0.90
   market-min-price: 0.0001
   market-moss-min-price: 0.017
-  market-rules-version: 5
+  market-rules-version: 6
+  # Economy monitoring only; these thresholds log a flag but never block a player.
+  anomaly:
+    player-money-created-limit: 2500000
+    player-items-sold-limit: 250000
+    single-sale-limit: 500000
   # Market prices use the day's highest observed sold volume, so rollbacks cannot raise prices.
-  # Per-item balancing is defined in market.txt and documented for every priced item in market_schedule.txt.
+  # Per-player balancing is defined in market.txt and documented for every priced item in market_schedule.txt.
+  # Each player's market volume is independent; one grinder cannot depress another player's prices.
 
 prices:
   DIAMOND: 250
