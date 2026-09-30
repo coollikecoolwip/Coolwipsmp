@@ -1623,8 +1623,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        BigDecimal unit = currentSellPrice(material);
-        if (unit == null) {
+        if (prices.get(material) == null) {
             p.sendMessage("§cThat item cannot be sold. Use /prices.");
             return;
         }
@@ -1636,27 +1635,40 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             p.sendMessage("§cYou can sell at most " + maxItems + " items at once.");
             return;
         }
-
-        BigDecimal gross = unit.multiply(BigDecimal.valueOf(amount));
-        if (gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
-            p.sendMessage("§cThat sale exceeds the $" + money(maxMoney) + " payout limit.");
+        if (count(p, material) < amount) {
+            p.sendMessage("§cYou don't have " + amount + "x " + pretty(material) + ".");
             return;
         }
 
-        long payout = afterTax(gross, sellTax);
-        if (payout < 1) {
-            p.sendMessage("§cThe sale value after tax is less than $1.");
-            return;
-        }
+        // For large sales, reserve the exact market quote once the sale is actually
+        // being executed. The returned gross is immutable for this transaction, so
+        // another sale cannot change this sale's payout after the items are removed.
+        if (requested != -2) {
+            BigDecimal previewUnit = currentSellPrice(material);
+            if (previewUnit == null) {
+                p.sendMessage("§cThat item cannot be sold. Use /prices.");
+                return;
+            }
+            BigDecimal previewGross = previewUnit.multiply(BigDecimal.valueOf(amount));
+            if (previewGross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
+                p.sendMessage("§cThat sale exceeds the $" + money(maxMoney) + " payout limit.");
+                return;
+            }
+            long previewPayout = afterTax(previewGross, sellTax);
+            if (previewPayout < 1) {
+                p.sendMessage("§cThe sale value after tax is less than $1.");
+                return;
+            }
 
-        if (requested != -2 && confirmationSeconds > 0 && payout >= 10000) {
-            pendingSales.put(p.getUniqueId(),
-                    new PendingSale(material.name(), amount, payout,
-                            System.currentTimeMillis() + confirmationSeconds * 1000L));
-            p.sendMessage("§eConfirm sale: §f/sell confirm §7to sell " + amount + "x "
-                    + pretty(material) + " for §a$" + money(payout)
-                    + " §7(after " + Math.round(sellTax * 100) + "% tax).");
-            return;
+            if (confirmationSeconds > 0 && previewPayout >= 10000) {
+                pendingSales.put(p.getUniqueId(),
+                        new PendingSale(material.name(), amount, previewPayout,
+                                System.currentTimeMillis() + confirmationSeconds * 1000L));
+                p.sendMessage("§eConfirm sale: §f/sell confirm §7to sell " + amount + "x "
+                        + pretty(material) + " for §a$" + money(previewPayout)
+                        + " §7(after " + Math.round(sellTax * 100) + "% tax).");
+                return;
+            }
         }
 
         if (!cooldownReady(p)) return;
@@ -1680,20 +1692,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         List<ItemStack> removed = new ArrayList<>();
         MarketSale marketSale = null;
         try {
-            // Remove the items before issuing the money credit. The sale has a complete
-            // rollback path, so failures before a confirmed payout return the items.
-            List<ItemStack> takenItems = takeItems(p, finalMaterial, finalAmount);
-            removed.addAll(takenItems);
-            if (takenItems.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
-                restoreItems(p, takenItems);
-                lock.unlock();
-                p.sendMessage("§cSale cancelled because the item transfer could not be completed.");
-                return;
-            }
-
+            // Get the exact market quote before removing anything.
+            // Once reserved, this sale keeps that quote even if another player sells
+            // the same item concurrently.
             marketSale = reserveMarketSale(finalMaterial, finalAmount);
             if (marketSale == null) {
-                restoreItems(p, removed);
                 lock.unlock();
                 p.sendMessage("§cSale cancelled because the market price could not be reserved.");
                 return;
@@ -1702,9 +1705,18 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             final long finalMoney = afterTax(marketSale.gross(), sellTax);
             if (marketSale.gross().compareTo(BigDecimal.valueOf(maxMoney)) > 0 || finalMoney < 1) {
                 releaseMarketSale(marketSale);
-                restoreItems(p, removed);
                 lock.unlock();
                 p.sendMessage("§cSale cancelled because the current market price exceeds the transaction limits.");
+                return;
+            }
+
+            // The quote is now locked. Only after that do we consume the items.
+            List<ItemStack> takenItems = takeItems(p, finalMaterial, finalAmount);
+            removed.addAll(takenItems);
+            if (takenItems.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
+                failSellTransaction(p, returnLocation, takenItems, marketSale);
+                lock.unlock();
+                p.sendMessage("§cSale cancelled because the item transfer could not be completed. Your items were returned.");
                 return;
             }
 
@@ -1740,16 +1752,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 try {
                     mutation = changeBank(discordId, finalMoney, reason, before);
                 } catch (RuntimeException e) {
-                    // The money request may have reached UnbelievaBoat before the exception.
-                    // Treat this as UNKNOWN and never restore the items automatically.
+                    // The payout request could have reached UnbelievaBoat before the
+                    // exception, so this is deliberately treated as UNKNOWN.
                     getLogger().log(java.util.logging.Level.SEVERE,
                             "Unexpected exception while applying a sale payout for " + p.getName()
                                     + ". Treating payout state as UNKNOWN.", e);
                     Bukkit.getScheduler().runTask(this, () -> {
                         if (lock.isHeldByCurrentThread()) lock.unlock();
-                        if (p.isOnline()) {
-                            p.sendMessage("§cSale could not be verified. Do not retry; contact staff.");
-                        }
+                        if (p.isOnline()) p.sendMessage("§cSale could not be verified. Do not retry; contact staff.");
                     });
                     return;
                 }
@@ -1780,9 +1790,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         getLogger().log(java.util.logging.Level.SEVERE,
                                 "Unexpected exception while finishing a sale for " + p.getName()
                                         + " (bank state " + mutation.state() + ").", e);
-
-                        // Never restore items after an uncertain/applied bank mutation:
-                        // doing so could duplicate a successful payout.
                         if (mutation.state() == BankMutationState.NOT_APPLIED) {
                             failSellTransaction(p, returnLocation, removed, finalMarketSale);
                         }
