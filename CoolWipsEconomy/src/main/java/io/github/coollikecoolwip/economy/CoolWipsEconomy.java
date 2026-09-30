@@ -46,6 +46,8 @@ import java.net.http.*;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.ReentrantLock;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -146,8 +148,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private YamlConfiguration economyStatsData;
     private LocalDate economyStatsDay;
     private final ReentrantLock economyStatsLock = new ReentrantLock();
+    private final AtomicBoolean economyStatsSaveQueued = new AtomicBoolean(false);
+    private final AtomicBoolean economyStatsDirty = new AtomicBoolean(false);
     private File economyLedgerFile;
     private final ReentrantLock economyLedgerLock = new ReentrantLock();
+    private final ConcurrentLinkedQueue<String> economyLedgerQueue = new ConcurrentLinkedQueue<>();
+    private final AtomicBoolean economyLedgerFlushQueued = new AtomicBoolean(false);
     private long economyLedgerLines;
     private int economyLedgerMaxEntries;
     private long anomalyPlayerMoneyCreatedLimit;
@@ -207,6 +213,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     @Override public void onDisable() {
+        flushEconomyLedgerQueue();
         saveMarketLedger();
         saveEconomyStats();
     }
@@ -725,33 +732,61 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void recordEconomyLedger(UUID uuid, String playerName, Material material, int amount,
                                      long money, String type, String category) {
         if (economyLedgerFile == null || money <= 0) return;
-        economyLedgerLock.lock();
+        String item = material == null ? "-" : material.name();
+        String safeName = (playerName == null ? "unknown" : playerName)
+                .replace("|", "/").replace("\n", " ");
+        String safeCategory = (category == null ? "UNKNOWN" : category)
+                .replace("|", "/").replace("\n", " ");
+        String line = System.currentTimeMillis() + "|" +
+                (uuid == null ? "-" : uuid) + "|" +
+                safeName + "|" + (type == null ? "UNKNOWN" : type) + "|" +
+                safeCategory + "|" + item + "|" + Math.max(0, amount) + "|" + money;
+        economyLedgerQueue.add(line);
+        scheduleEconomyLedgerFlush();
+    }
+
+    private void scheduleEconomyLedgerFlush() {
+        if (!economyLedgerFlushQueued.compareAndSet(false, true)) return;
+        Bukkit.getScheduler().runTaskLaterAsynchronously(this, this::flushEconomyLedgerQueue, 20L);
+    }
+
+    private void flushEconomyLedgerQueue() {
         try {
-            String item = material == null ? "-" : material.name();
-            String safeName = (playerName == null ? "unknown" : playerName)
-                    .replace("|", "/").replace("\n", " ");
-            String safeCategory = (category == null ? "UNKNOWN" : category)
-                    .replace("|", "/").replace("\n", " ");
-            String line = System.currentTimeMillis() + "|" +
-                    (uuid == null ? "-" : uuid) + "|" +
-                    safeName + "|" + (type == null ? "UNKNOWN" : type) + "|" +
-                    safeCategory + "|" + item + "|" + Math.max(0, amount) + "|" + money +
-                    System.lineSeparator();
-            try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(
-                    economyLedgerFile.toPath(), StandardCharsets.UTF_8,
-                    java.nio.file.StandardOpenOption.CREATE,
-                    java.nio.file.StandardOpenOption.APPEND,
-                    java.nio.file.StandardOpenOption.WRITE)) {
-                writer.write(line);
+            List<String> batch = new ArrayList<>();
+            String line;
+            while (batch.size() < 1000 && (line = economyLedgerQueue.poll()) != null) {
+                batch.add(line);
             }
-            economyLedgerLines++;
-            if (economyLedgerLines > economyLedgerMaxEntries * 11L / 10L) {
-                trimEconomyLedgerLocked();
+            if (batch.isEmpty()) return;
+
+            economyLedgerLock.lock();
+            try {
+                if (economyLedgerFile == null) return;
+                try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(
+                        economyLedgerFile.toPath(), StandardCharsets.UTF_8,
+                        java.nio.file.StandardOpenOption.CREATE,
+                        java.nio.file.StandardOpenOption.APPEND,
+                        java.nio.file.StandardOpenOption.WRITE)) {
+                    for (String entry : batch) {
+                        writer.write(entry);
+                        writer.newLine();
+                    }
+                }
+                economyLedgerLines += batch.size();
+                if (economyLedgerLines > economyLedgerMaxEntries * 11L / 10L) {
+                    trimEconomyLedgerLocked();
+                }
+            } catch (IOException e) {
+                for (int i = batch.size() - 1; i >= 0; i--) {
+                    economyLedgerQueue.add(batch.get(i));
+                }
+                getLogger().warning("Could not append economy ledger: " + e.getMessage());
+            } finally {
+                economyLedgerLock.unlock();
             }
-        } catch (IOException e) {
-            getLogger().warning("Could not append economy ledger: " + e.getMessage());
         } finally {
-            economyLedgerLock.unlock();
+            economyLedgerFlushQueued.set(false);
+            if (!economyLedgerQueue.isEmpty()) scheduleEconomyLedgerFlush();
         }
     }
 
@@ -847,6 +882,48 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void requestEconomyStatsSaveLocked() {
+        economyStatsDirty.set(true);
+        if (!economyStatsSaveQueued.compareAndSet(false, true)) return;
+
+        Bukkit.getScheduler().runTaskLaterAsynchronously(this, () -> {
+            try {
+                economyStatsLock.lock();
+                try {
+                    if (economyStatsDirty.get()) {
+                        saveEconomyStatsLocked();
+                        economyStatsDirty.set(false);
+                    }
+                } finally {
+                    economyStatsLock.unlock();
+                }
+            } finally {
+                economyStatsSaveQueued.set(false);
+                if (economyStatsDirty.get()) requestEconomyStatsSave();
+            }
+        }, 20L);
+    }
+
+    private void requestEconomyStatsSave() {
+        if (!economyStatsSaveQueued.compareAndSet(false, true)) return;
+        Bukkit.getScheduler().runTaskLaterAsynchronously(this, () -> {
+            try {
+                economyStatsLock.lock();
+                try {
+                    if (economyStatsDirty.get()) {
+                        saveEconomyStatsLocked();
+                        economyStatsDirty.set(false);
+                    }
+                } finally {
+                    economyStatsLock.unlock();
+                }
+            } finally {
+                economyStatsSaveQueued.set(false);
+                if (economyStatsDirty.get()) requestEconomyStatsSave();
+            }
+        }, 20L);
+    }
+
     private long statAdd(long current, long amount) {
         if (amount <= 0) return current;
         return current > Long.MAX_VALUE - amount ? Long.MAX_VALUE : current + amount;
@@ -914,7 +991,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 economyStatsData.set("flags." + uuid, flag);
                 getLogger().warning("ECONOMY_FLAG | " + flag);
             }
-            saveEconomyStatsLocked();
+            requestEconomyStatsSaveLocked();
         } finally {
             economyStatsLock.unlock();
         }
@@ -940,7 +1017,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     statAdd(economyStatsData.getLong(prefix + playerPath, 0L), money));
             economyStatsData.set(prefix + ".name", playerName);
             economyStatsData.set(prefix + ".last_event", System.currentTimeMillis());
-            saveEconomyStatsLocked();
+            requestEconomyStatsSaveLocked();
         } finally {
             economyStatsLock.unlock();
         }
@@ -986,7 +1063,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     getLogger().warning("ECONOMY_FLAG | " + flag);
                 }
             }
-            saveEconomyStatsLocked();
+            requestEconomyStatsSaveLocked();
         } finally {
             economyStatsLock.unlock();
         }
