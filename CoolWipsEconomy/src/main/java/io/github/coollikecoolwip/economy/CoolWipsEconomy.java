@@ -1102,13 +1102,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private int validateCraftingEconomy() {
         if (prices.isEmpty()) return 0;
         int totalAdjustments = 0;
-        for (int pass = 0; pass < 6; pass++) {
+
+        for (int pass = 0; pass < 8; pass++) {
             int passAdjustments = 0;
             Iterator<Recipe> iterator = Bukkit.recipeIterator();
+
             while (iterator.hasNext()) {
                 Recipe recipe = iterator.next();
-                if (!(recipe instanceof ShapedRecipe) && !(recipe instanceof ShapelessRecipe)) continue;
-
                 ItemStack result = recipe.getResult();
                 if (result == null || result.getType().isAir() || result.getAmount() <= 0) continue;
 
@@ -1116,19 +1116,42 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 boolean allPriced = true;
 
                 if (recipe instanceof ShapedRecipe shaped) {
-                    for (ItemStack ingredient : shaped.getIngredientMap().values()) {
+                    Map<Character, ItemStack> ingredientMap = shaped.getIngredientMap();
+                    for (String row : shaped.getShape()) {
+                        for (int i = 0; i < row.length(); i++) {
+                            ItemStack ingredient = ingredientMap.get(row.charAt(i));
+                            if (ingredient == null || ingredient.getType().isAir()) continue;
+                            BigDecimal value = prices.get(ingredient.getType());
+                            if (value == null) {
+                                allPriced = false;
+                                break;
+                            }
+                            inputValue = inputValue.add(value.multiply(
+                                    BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
+                        }
+                        if (!allPriced) break;
+                    }
+                } else if (recipe instanceof ShapelessRecipe shapeless) {
+                    for (ItemStack ingredient : shapeless.getIngredientList()) {
                         if (ingredient == null || ingredient.getType().isAir()) continue;
                         BigDecimal value = prices.get(ingredient.getType());
-                        if (value == null) { allPriced = false; break; }
-                        inputValue = inputValue.add(value.multiply(BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
+                        if (value == null) {
+                            allPriced = false;
+                            break;
+                        }
+                        inputValue = inputValue.add(value.multiply(
+                                BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
                     }
+                } else if (recipe instanceof StonecuttingRecipe stonecutting) {
+                    BigDecimal value = minimumRecipeChoiceSellValue(stonecutting.getInputChoice());
+                    if (value == null) allPriced = false;
+                    else inputValue = inputValue.add(value);
+                } else if (recipe instanceof CookingRecipe<?> cooking) {
+                    BigDecimal value = minimumRecipeChoiceSellValue(cooking.getInputChoice());
+                    if (value == null) allPriced = false;
+                    else inputValue = inputValue.add(value);
                 } else {
-                    for (ItemStack ingredient : ((ShapelessRecipe) recipe).getIngredientList()) {
-                        if (ingredient == null || ingredient.getType().isAir()) continue;
-                        BigDecimal value = prices.get(ingredient.getType());
-                        if (value == null) { allPriced = false; break; }
-                        inputValue = inputValue.add(value.multiply(BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
-                    }
+                    continue;
                 }
 
                 BigDecimal current = prices.get(result.getType());
@@ -1147,10 +1170,45 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                             + " => $" + safe.stripTrailingZeros().toPlainString());
                 }
             }
+
             totalAdjustments += passAdjustments;
             if (passAdjustments == 0) break;
         }
         return totalAdjustments;
+    }
+
+    private BigDecimal minimumRecipeChoiceSellValue(RecipeChoice choice) {
+        if (choice == null) return null;
+        BigDecimal minimum = null;
+
+        if (choice instanceof RecipeChoice.ExactChoice exact) {
+            for (ItemStack stack : exact.getChoices()) {
+                if (stack == null || stack.getType().isAir()) continue;
+                BigDecimal value = prices.get(stack.getType());
+                if (value == null) continue;
+                BigDecimal candidate = value.multiply(
+                        BigDecimal.valueOf(Math.max(1, stack.getAmount())));
+                minimum = minimum == null || candidate.compareTo(minimum) < 0 ? candidate : minimum;
+            }
+        } else if (choice instanceof RecipeChoice.MaterialChoice materialChoice) {
+            for (Material material : materialChoice.getChoices()) {
+                BigDecimal value = prices.get(material);
+                if (value == null) continue;
+                minimum = minimum == null || value.compareTo(minimum) < 0 ? value : minimum;
+            }
+        }
+
+        if (minimum != null) return minimum;
+
+        try {
+            ItemStack representative = choice.getItemStack();
+            if (representative == null || representative.getType().isAir()) return null;
+            BigDecimal value = prices.get(representative.getType());
+            if (value == null) return null;
+            return value.multiply(BigDecimal.valueOf(Math.max(1, representative.getAmount())));
+        } catch (RuntimeException e) {
+            return null;
+        }
     }
 
     private void loadRemotePrices() {
@@ -1326,18 +1384,25 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void validateShopPrices() {
         if (prices.isEmpty() || shopPrices.isEmpty()) return;
         List<Material> invalid = new ArrayList<>();
+        BigDecimal buyMultiplier = BigDecimal.ONE.add(BigDecimal.valueOf(buyTax));
+        BigDecimal sellMultiplier = BigDecimal.ONE.subtract(BigDecimal.valueOf(sellTax));
+
         for (Map.Entry<Material, Long> entry : shopPrices.entrySet()) {
             BigDecimal sellPrice = prices.get(entry.getKey());
             if (sellPrice == null) continue;
-            long sellPayout = afterTax(sellPrice, sellTax);
-            long chargedBuy = Math.max(0, Math.round(entry.getValue() * (1.0 + buyTax)));
-            if (chargedBuy <= sellPayout) {
+
+            BigDecimal sellPayout = sellPrice.multiply(sellMultiplier);
+            BigDecimal chargedBuy = BigDecimal.valueOf(entry.getValue()).multiply(buyMultiplier);
+
+            if (chargedBuy.compareTo(sellPayout) <= 0) {
                 invalid.add(entry.getKey());
                 getLogger().warning("Blocked unsafe shop price for " + entry.getKey()
-                        + ": charged buy $" + chargedBuy
-                        + " would not exceed its post-tax sell payout of $" + sellPayout + ".");
+                        + ": charged buy $" + chargedBuy.stripTrailingZeros().toPlainString()
+                        + " would not exceed its post-tax sell payout of $"
+                        + sellPayout.stripTrailingZeros().toPlainString() + ".");
             }
         }
+
         for (Material material : invalid) shopPrices.remove(material);
     }
 
