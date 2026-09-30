@@ -17,6 +17,8 @@ settings:
   maximum-bounty: 1000000
   sell-tax: 0.05
   buy-tax: 0.05
+  # Shared daily cap for common renewable/farm output sales. $0 disables the cap.
+  daily-farm-income-cap: 5000
 prices:
   DIAMOND: 250
   IRON_INGOT: 25
