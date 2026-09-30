@@ -20,7 +20,6 @@ import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
-import org.bukkit.inventory.RecipeIterator;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.ShapelessRecipe;
 import org.bukkit.inventory.EquipmentSlot;
@@ -482,6 +481,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void refreshMarketDayLocked() {
+        String today = LocalDate.now(ZoneId.systemDefault()).toString();
+        if (today.equals(marketDay)) return;
+        marketDay = today;
+        marketSoldToday.clear();
+        marketPeakSoldToday.clear();
+        saveMarketLedgerLocked();
+    }
+
     private boolean isFarmIncomeMaterial(Material material) {
         if (material == null) return false;
         if (FARM_INCOME_MATERIALS.contains(material)) return true;
@@ -905,7 +913,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         int totalAdjustments = 0;
         for (int pass = 0; pass < 6; pass++) {
             int passAdjustments = 0;
-            RecipeIterator iterator = Bukkit.recipeIterator();
+            Iterator<Recipe> iterator = Bukkit.recipeIterator();
             while (iterator.hasNext()) {
                 Recipe recipe = iterator.next();
                 if (!(recipe instanceof ShapedRecipe) && !(recipe instanceof ShapelessRecipe)) continue;
