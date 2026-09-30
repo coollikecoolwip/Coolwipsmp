@@ -22,6 +22,9 @@ import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.ShapelessRecipe;
+import org.bukkit.inventory.CookingRecipe;
+import org.bukkit.inventory.RecipeChoice;
+import org.bukkit.inventory.StonecuttingRecipe;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.persistence.PersistentDataType;
@@ -140,7 +143,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private YamlConfiguration economyStatsData;
     private LocalDate economyStatsDay;
     private final ReentrantLock economyStatsLock = new ReentrantLock();
+    private File economyLedgerFile;
+    private final ReentrantLock economyLedgerLock = new ReentrantLock();
+    private long economyLedgerLines;
+    private int economyLedgerMaxEntries;
     private long anomalyPlayerMoneyCreatedLimit;
+    private long anomalyPlayerMoneyTransferredLimit;
     private long anomalyPlayerItemsSoldLimit;
     private long anomalySingleSaleLimit;
     private String marketDay;
@@ -174,6 +182,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadBundledMarketRules();
         loadMarketLedger();
         loadEconomyStats();
+        loadEconomyLedger();
         Bukkit.getPluginManager().registerEvents(this, this);
 
         for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
@@ -236,8 +245,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 .max(BigDecimal.ZERO);
         marketRulesVersion = Math.max(1, getConfig().getInt("settings.market-rules-version", 2));
         anomalyPlayerMoneyCreatedLimit = Math.max(1L, getConfig().getLong("settings.anomaly.player-money-created-limit", 2500000L));
+        anomalyPlayerMoneyTransferredLimit = Math.max(1L, getConfig().getLong("settings.anomaly.player-money-transferred-limit", 5000000L));
         anomalyPlayerItemsSoldLimit = Math.max(1L, getConfig().getLong("settings.anomaly.player-items-sold-limit", 250000L));
         anomalySingleSaleLimit = Math.max(1L, getConfig().getLong("settings.anomaly.single-sale-limit", 500000L));
+        economyLedgerMaxEntries = Math.max(1000, getConfig().getInt("settings.ledger-max-entries", 20000));
         defaultMarketRule = new MarketRule(
                 marketFreeUnits,
                 marketStepUnits,
@@ -686,6 +697,82 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
+    private void loadEconomyLedger() {
+        economyLedgerLock.lock();
+        try {
+            if (!getDataFolder().exists()) getDataFolder().mkdirs();
+            economyLedgerFile = new File(getDataFolder(), "economy-ledger.log");
+            if (!economyLedgerFile.exists()) {
+                economyLedgerLines = 0L;
+                return;
+            }
+            try {
+                economyLedgerLines = java.nio.file.Files.readAllLines(
+                        economyLedgerFile.toPath(), StandardCharsets.UTF_8).size();
+                if (economyLedgerLines > economyLedgerMaxEntries) trimEconomyLedgerLocked();
+            } catch (IOException e) {
+                getLogger().warning("Could not inspect economy ledger: " + e.getMessage());
+                economyLedgerLines = 0L;
+            }
+        } finally {
+            economyLedgerLock.unlock();
+        }
+    }
+
+    private void recordEconomyLedger(UUID uuid, String playerName, Material material, int amount,
+                                     long money, String type, String category) {
+        if (economyLedgerFile == null || money <= 0) return;
+        economyLedgerLock.lock();
+        try {
+            String item = material == null ? "-" : material.name();
+            String safeName = (playerName == null ? "unknown" : playerName)
+                    .replace("|", "/").replace("\n", " ");
+            String safeCategory = (category == null ? "UNKNOWN" : category)
+                    .replace("|", "/").replace("\n", " ");
+            String line = System.currentTimeMillis() + "|" +
+                    (uuid == null ? "-" : uuid) + "|" +
+                    safeName + "|" + (type == null ? "UNKNOWN" : type) + "|" +
+                    safeCategory + "|" + item + "|" + Math.max(0, amount) + "|" + money +
+                    System.lineSeparator();
+            try (java.io.BufferedWriter writer = java.nio.file.Files.newBufferedWriter(
+                    economyLedgerFile.toPath(), StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.APPEND,
+                    java.nio.file.StandardOpenOption.WRITE)) {
+                writer.write(line);
+            }
+            economyLedgerLines++;
+            if (economyLedgerLines > economyLedgerMaxEntries * 11L / 10L) {
+                trimEconomyLedgerLocked();
+            }
+        } catch (IOException e) {
+            getLogger().warning("Could not append economy ledger: " + e.getMessage());
+        } finally {
+            economyLedgerLock.unlock();
+        }
+    }
+
+    private void trimEconomyLedgerLocked() {
+        if (economyLedgerFile == null || !economyLedgerFile.exists()) return;
+        try {
+            List<String> lines = java.nio.file.Files.readAllLines(
+                    economyLedgerFile.toPath(), StandardCharsets.UTF_8);
+            if (lines.size() <= economyLedgerMaxEntries) {
+                economyLedgerLines = lines.size();
+                return;
+            }
+            List<String> kept = lines.subList(lines.size() - economyLedgerMaxEntries, lines.size());
+            java.nio.file.Files.write(
+                    economyLedgerFile.toPath(), kept, StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE,
+                    java.nio.file.StandardOpenOption.TRUNCATE_EXISTING,
+                    java.nio.file.StandardOpenOption.WRITE);
+            economyLedgerLines = kept.size();
+        } catch (IOException e) {
+            getLogger().warning("Could not trim economy ledger: " + e.getMessage());
+        }
+    }
+
     private void loadEconomyStats() {
         economyStatsLock.lock();
         try {
@@ -697,6 +784,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 economyStatsData.set("day", today);
                 economyStatsData.set("money_created", 0L);
                 economyStatsData.set("money_removed", 0L);
+                economyStatsData.set("money_transferred", 0L);
+                economyStatsData.set("transfers", 0L);
                 economyStatsData.set("items_sold", 0L);
                 economyStatsData.set("items_bought", 0L);
                 economyStatsData.set("created_by_item", null);
@@ -730,6 +819,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         economyStatsData.set("day", today);
         economyStatsData.set("money_created", 0L);
         economyStatsData.set("money_removed", 0L);
+        economyStatsData.set("money_transferred", 0L);
+        economyStatsData.set("transfers", 0L);
         economyStatsData.set("items_sold", 0L);
         economyStatsData.set("items_bought", 0L);
         economyStatsData.set("created_by_item", null);
