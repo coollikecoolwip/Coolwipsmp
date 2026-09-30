@@ -75,10 +75,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     
     // Dynamic market for renewable/farm outputs: normal volumes keep full value,
     // heavy volume lowers only that item's sell price until the configured floor.
-    private static final long DEFAULT_MARKET_FREE_UNITS = 512L;
-    private static final long DEFAULT_MARKET_STEP_UNITS = 512L;
+    private static final long DEFAULT_MARKET_FREE_UNITS = 2048L;
+    private static final long DEFAULT_MARKET_STEP_UNITS = 2048L;
     private static final BigDecimal DEFAULT_MARKET_DROP_PERCENT = new BigDecimal("0.10");
-    private static final BigDecimal DEFAULT_MARKET_MIN_MULTIPLIER = new BigDecimal("0.25");
+    private static final BigDecimal DEFAULT_MARKET_MIN_PRICE = new BigDecimal("90");
 
     private static final Set<Material> FARM_INCOME_MATERIALS = EnumSet.of(
             Material.WHEAT, Material.WHEAT_SEEDS, Material.CARROT, Material.POTATO, Material.BEETROOT,
@@ -134,7 +134,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private long marketFreeUnits;
     private long marketStepUnits;
     private BigDecimal marketDropPercent;
-    private BigDecimal marketMinMultiplier;
+    private BigDecimal marketMinPrice;
 
     private record MarketSale(Material material, int amount, BigDecimal gross, boolean marketTracked) {}
 
@@ -202,8 +202,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         marketStepUnits = Math.max(1L, getConfig().getLong("settings.market-step-units", DEFAULT_MARKET_STEP_UNITS));
         marketDropPercent = parseDecimalSetting("settings.market-price-drop", DEFAULT_MARKET_DROP_PERCENT)
                 .max(BigDecimal.ZERO).min(new BigDecimal("0.99"));
-        marketMinMultiplier = parseDecimalSetting("settings.market-min-multiplier", DEFAULT_MARKET_MIN_MULTIPLIER)
-                .max(new BigDecimal("0.01")).min(BigDecimal.ONE);
+        marketMinPrice = parseDecimalSetting("settings.market-min-price", DEFAULT_MARKET_MIN_PRICE)
+                .max(BigDecimal.ZERO);
 
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
@@ -381,8 +381,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         long steps = 1L + (sold - marketFreeUnits) / marketStepUnits;
         BigDecimal multiplier = BigDecimal.ONE.subtract(marketDropPercent)
                 .pow((int) Math.min(steps, 1000L));
-        if (multiplier.compareTo(marketMinMultiplier) < 0) multiplier = marketMinMultiplier;
-        return base.multiply(multiplier);
+        BigDecimal price = base.multiply(multiplier);
+        if (base.compareTo(marketMinPrice) > 0 && price.compareTo(marketMinPrice) < 0) {
+            price = marketMinPrice;
+        }
+        return price;
     }
 
     private BigDecimal marketGrossForSale(Material material, long sold, int amount) {
@@ -2808,7 +2811,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Dynamic renewable market: §aenabled");
         sender.sendMessage("§7Full-price volume per item: §f" + marketFreeUnits + " units/day");
         sender.sendMessage("§7Price drop per step: §f" + marketDropPercent.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%");
-        sender.sendMessage("§7Minimum market price: §f" + marketMinMultiplier.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "% of base");
+        sender.sendMessage("§7Minimum market price: §f$" + marketMinPrice.stripTrailingZeros().toPlainString());
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
 
