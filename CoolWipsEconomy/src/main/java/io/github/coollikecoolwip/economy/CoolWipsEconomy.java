@@ -26,7 +26,6 @@ import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.persistence.PersistentDataType;
 import org.bukkit.NamespacedKey;
 import org.bukkit.event.block.Action;
-import org.bukkit.configuration.file.YamlConfiguration;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -34,6 +33,7 @@ import java.io.File;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import org.bukkit.configuration.file.YamlConfiguration;
 import java.net.URI;
 import java.net.http.*;
 import java.time.Duration;
@@ -72,7 +72,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<String, Long> automaticSellChestCooldowns = new ConcurrentHashMap<>();
     private final Set<String> scheduledAutomaticSellChestRetries = ConcurrentHashMap.newKeySet();
     private static final long AUTOMATIC_SELL_CHEST_COOLDOWN_MS = 30_000L;
-
+    
+    // Dynamic market for renewable/farm outputs: normal volumes keep full value,
+    // heavy volume lowers only that item's sell price until the configured floor.
     private static final long DEFAULT_MARKET_FREE_UNITS = 512L;
     private static final long DEFAULT_MARKET_STEP_UNITS = 512L;
     private static final BigDecimal DEFAULT_MARKET_DROP_PERCENT = new BigDecimal("0.10");
@@ -134,8 +136,166 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketDropPercent;
     private BigDecimal marketMinMultiplier;
 
-    private record MarketSale(Material material, int amount, BigDecimal unitPrice, BigDecimal gross,
-                              boolean marketTracked) {}
+    private record MarketSale(Material material, int amount, BigDecimal gross, boolean marketTracked) {}
+
+
+    private static final Set<String> UNSAFE_SELL_MATERIALS = Set.of(
+            "BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK",
+            "REPEATING_COMMAND_BLOCK", "STRUCTURE_BLOCK", "STRUCTURE_VOID",
+            "JIGSAW", "SPAWNER", "TRIAL_SPAWNER", "VAULT",
+            "REINFORCED_DEEPSLATE", "END_PORTAL_FRAME", "END_PORTAL",
+            "END_GATEWAY", "LIGHT", "DEBUG_STICK", "KNOWLEDGE_BOOK"
+    );
+
+    @Override public void onEnable() {
+        saveDefaultConfig();
+        loadSettings();
+        http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
+        sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
+        loadMarketLedger();
+        Bukkit.getPluginManager().registerEvents(this, this);
+
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
+            PluginCommand c = getCommand(name);
+            if (c != null) {
+                c.setExecutor(this);
+                c.setTabCompleter(this);
+            }
+        }
+
+        getLogger().info("CoolWips Economy enabled. Sell prices: " + prices.size() +
+                ", shop prices: " + shopPrices.size() + ".");
+        if (tokenMissing()) getLogger().warning("Set your UnbelievaBoat API token in config.yml.");
+
+        loadRemotePrices();
+        loadRemoteShop();
+        startNonNegativeBalanceGuard();
+    }
+
+    @Override public void onDisable() {
+        saveMarketLedger();
+    }
+
+    private void loadSettings() {
+        reloadConfig();
+
+        token = getConfig().getString("api-token", "").trim();
+        guildId = getConfig().getString("guild-id", "").trim();
+        baseUrl = getConfig().getString("api.base-url", "https://unbelievaboat.com/api/v1").replaceAll("/+$", "");
+        reason = getConfig().getString("api.reason", "CoolWips SMP Minecraft sale");
+        buyReason = getConfig().getString("api.buy-reason", "CoolWips SMP Minecraft shop purchase");
+        pricesUrl = getConfig().getString("prices-url", DEFAULT_PRICES_URL).trim();
+        shopUrl = getConfig().getString("shop-url", DEFAULT_SHOP_URL).trim();
+        if (pricesUrl.isBlank()) pricesUrl = DEFAULT_PRICES_URL;
+        if (shopUrl.isBlank()) shopUrl = DEFAULT_SHOP_URL;
+
+        maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
+        maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
+        pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
+        transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
+        confirmationSeconds = Math.max(0, getConfig().getInt("settings.confirmation-seconds", 10));
+        minimumBounty = Math.max(1L, getConfig().getLong("settings.minimum-bounty", 100));
+        maximumBounty = Math.max(minimumBounty, getConfig().getLong("settings.maximum-bounty", 1000000));
+        sellTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.sell-tax", 0.05)));
+        buyTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.buy-tax", 0.05)));
+        marketFreeUnits = Math.max(0L, getConfig().getLong("settings.market-full-price-units", DEFAULT_MARKET_FREE_UNITS));
+        marketStepUnits = Math.max(1L, getConfig().getLong("settings.market-step-units", DEFAULT_MARKET_STEP_UNITS));
+        marketDropPercent = parseDecimalSetting("settings.market-price-drop", DEFAULT_MARKET_DROP_PERCENT)
+                .max(BigDecimal.ZERO).min(new BigDecimal("0.99"));
+        marketMinMultiplier = parseDecimalSetting("settings.market-min-multiplier", DEFAULT_MARKET_MIN_MULTIPLIER)
+                .max(new BigDecimal("0.01")).min(BigDecimal.ONE);
+
+        sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
+        maintenanceBlocks.clear();
+        for (String name : getConfig().getStringList("maintenance.blocked-items")) {
+            Material m = Material.matchMaterial(name.replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT));
+            if (m != null) maintenanceBlocks.add(m);
+        }
+
+        prices.clear();
+        prices.putAll(readConfigSellPrices("prices"));
+
+        shopPrices.clear();
+        shopPrices.putAll(readConfigPrices("shop"));
+        validateShopPrices();
+        loadBounties();
+    }
+
+    private Map<Material, BigDecimal> readConfigSellPrices(String sectionName) {
+        Map<Material, BigDecimal> result = new HashMap<>();
+        var section = getConfig().getConfigurationSection(sectionName);
+        if (section == null) return result;
+
+        for (String key : section.getKeys(false)) {
+            Material m = Material.matchMaterial(key);
+            String raw = getConfig().getString(sectionName + "." + key, "");
+            try {
+                BigDecimal value = new BigDecimal(raw);
+                if (m != null && value.signum() > 0) result.put(m, value);
+            } catch (NumberFormatException ignored) {
+                getLogger().warning("Ignoring invalid sell price in config: " + key);
+            }
+        }
+        return result;
+    }
+
+    private Map<Material, Long> readConfigPrices(String sectionName) {
+        Map<Material, Long> result = new HashMap<>();
+        var section = getConfig().getConfigurationSection(sectionName);
+        if (section == null) return result;
+
+        for (String key : section.getKeys(false)) {
+            Material m = Material.matchMaterial(key);
+            long value = getConfig().getLong(sectionName + "." + key);
+            if (m != null && value > 0) result.put(m, value);
+        }
+        return result;
+    }
+
+    private int timeout() {
+        return Math.max(5, getConfig().getInt("api.timeout-seconds", 15));
+    }
+
+    private boolean tokenMissing() {
+        return token.isBlank()
+                || token.equalsIgnoreCase("PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE")
+                || guildId.isBlank();
+    }
+
+    private String userUrl(String discordId) {
+        return baseUrl + "/guilds/" + guildId + "/users/" + discordId;
+    }
+
+    private HttpResult api(String method, String url, String body) {
+        try {
+            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
+                    .timeout(Duration.ofSeconds(timeout()))
+                    .header("Authorization", token)
+                    .header("Accept", "application/json")
+                    .header("Content-Type", "application/json");
+
+            if ("PATCH".equals(method)) {
+                b.method("PATCH", HttpRequest.BodyPublishers.ofString(body));
+            } else {
+                b.GET();
+            }
+
+            HttpResponse<String> response = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
+            return new HttpResult(response.statusCode(), response.body());
+        } catch (Exception e) {
+            return new HttpResult(0, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
+        }
+    }
+
+    private BigDecimal parseDecimalSetting(String path, BigDecimal fallback) {
+        String raw = getConfig().getString(path, fallback.toPlainString());
+        try {
+            return new BigDecimal(raw);
+        } catch (NumberFormatException e) {
+            getLogger().warning("Invalid decimal setting " + path + "; using " + fallback + ".");
+            return fallback;
+        }
+    }
 
     private void loadMarketLedger() {
         marketLock.lock();
@@ -147,8 +307,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             marketData = YamlConfiguration.loadConfiguration(marketFile);
             marketDay = LocalDate.now(ZoneId.systemDefault()).toString();
 
-            String storedDay = marketData.getString("day", "");
-            if (!marketDay.equals(storedDay)) {
+            if (!marketDay.equals(marketData.getString("day", ""))) {
                 marketSoldToday.clear();
                 marketData.set("sold", null);
                 marketData.set("day", marketDay);
@@ -229,14 +388,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketGrossForSale(Material material, long sold, int amount) {
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return BigDecimal.ZERO;
-        if (!isFarmIncomeMaterial(material)) {
-            return base.multiply(BigDecimal.valueOf(amount));
-        }
+        if (!isFarmIncomeMaterial(material)) return base.multiply(BigDecimal.valueOf(amount));
 
         long remaining = amount;
         long cursor = sold;
         BigDecimal gross = BigDecimal.ZERO;
-
         while (remaining > 0) {
             BigDecimal unit = marketUnitPrice(material, cursor);
             long nextBoundary;
@@ -246,13 +402,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 long stepIndex = (cursor - marketFreeUnits) / marketStepUnits;
                 nextBoundary = marketFreeUnits + Math.multiplyExact(stepIndex + 1L, marketStepUnits);
             }
-
             long chunk = Math.min(remaining, Math.max(1L, nextBoundary - cursor));
             gross = gross.add(unit.multiply(BigDecimal.valueOf(chunk)));
             cursor += chunk;
             remaining -= chunk;
         }
-
         return gross;
     }
 
@@ -272,25 +426,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return null;
         if (!isFarmIncomeMaterial(material)) {
-            return new MarketSale(material, amount, base,
-                    base.multiply(BigDecimal.valueOf(amount)), false);
+            return new MarketSale(material, amount, base.multiply(BigDecimal.valueOf(amount)), false);
         }
-
         marketLock.lock();
         try {
             refreshMarketDayLocked();
             long sold = marketSoldToday.getOrDefault(material, 0L);
             BigDecimal gross = marketGrossForSale(material, sold, amount);
-            BigDecimal averageUnit = gross.divide(BigDecimal.valueOf(amount), 12, RoundingMode.HALF_UP);
-            long newSold;
-            try {
-                newSold = Math.addExact(sold, amount);
-            } catch (ArithmeticException e) {
-                return null;
-            }
+            long newSold = Math.addExact(sold, amount);
             marketSoldToday.put(material, newSold);
             saveMarketLedgerLocked();
-            return new MarketSale(material, amount, averageUnit, gross, true);
+            return new MarketSale(material, amount, gross, true);
+        } catch (ArithmeticException e) {
+            return null;
         } finally {
             marketLock.unlock();
         }
@@ -302,7 +450,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         try {
             refreshMarketDayLocked();
             Map<Material, Long> newTotals = new HashMap<>();
-
             for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
                 Material material = entry.getKey();
                 int amount = entry.getValue();
@@ -311,24 +458,21 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 boolean tracked = isFarmIncomeMaterial(material);
                 long sold = marketSoldToday.getOrDefault(material, 0L);
-                BigDecimal gross = tracked ? marketGrossForSale(material, sold, amount)
+                BigDecimal gross = tracked
+                        ? marketGrossForSale(material, sold, amount)
                         : base.multiply(BigDecimal.valueOf(amount));
-                BigDecimal averageUnit = gross.divide(BigDecimal.valueOf(amount), 12, RoundingMode.HALF_UP);
-                if (tracked) {
-                    try {
-                        newTotals.put(material, Math.addExact(sold, amount));
-                    } catch (ArithmeticException e) {
-                        return Collections.emptyMap();
-                    }
-                }
-                result.put(material, new MarketSale(material, amount, averageUnit, gross, tracked));
+                if (tracked) newTotals.put(material, Math.addExact(sold, amount));
+                result.put(material, new MarketSale(material, amount, gross, tracked));
             }
 
+            if (result.size() != amounts.size()) return Collections.emptyMap();
             for (Map.Entry<Material, Long> entry : newTotals.entrySet()) {
                 marketSoldToday.put(entry.getKey(), entry.getValue());
             }
             if (!newTotals.isEmpty()) saveMarketLedgerLocked();
             return result;
+        } catch (ArithmeticException e) {
+            return Collections.emptyMap();
         } finally {
             marketLock.unlock();
         }
@@ -1153,6 +1297,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
+
         // Sell up to the same per-transaction item limit used by /sell and /sellall.
         // Do not reject the entire chest just because it contains more than maxItems.
         for (ItemStack stack : inventory.getContents()) {
@@ -1164,6 +1309,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (remainingCapacity <= 0) break;
 
             int amount = Math.min(stack.getAmount(), remainingCapacity);
+            if (amount <= 0) continue;
             totalItems += amount;
             amounts.merge(stack.getType(), amount, Integer::sum);
         }
@@ -1239,7 +1385,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         String discordId = linkedId(info.owner());
         if (discordId == null) {
-            releaseMarketBatch(marketSales);
             restoreChestItems(inventory, removed);
             playerLock.unlock();
             lock.unlock();
@@ -1253,7 +1398,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     "CoolWips SMP automatic sell chest", null);
             Bukkit.getScheduler().runTask(this, () -> {
                 if (result.state() == BankMutationState.NOT_APPLIED) {
-                    releaseFarmIncome(info.owner(), farmGross);
                     restoreChestItems(inventory, removed);
                     playerLock.unlock();
                     lock.unlock();
@@ -1493,7 +1637,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         if (requested != -2 && confirmationSeconds > 0 && payout >= 10000) {
             pendingSales.put(p.getUniqueId(),
-                    new PendingSale(material.name(), amount,
+                    new PendingSale(material.name(), amount, payout,
                             System.currentTimeMillis() + confirmationSeconds * 1000L));
             p.sendMessage("§eConfirm sale: §f/sell confirm §7to sell " + amount + "x "
                     + pretty(material) + " for §a$" + money(payout)
@@ -1565,7 +1709,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             Bukkit.getScheduler().runTask(this, () -> {
                 if (mutation.state() == BankMutationState.NOT_APPLIED) {
-                    releaseFarmIncome(p.getUniqueId(), finalFarmGross);
                     if (p.isOnline()) restoreItems(p, removed);
                     else if (returnLocation.getWorld() != null)
                         for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
@@ -2567,7 +2710,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
-    private record PendingSale(String material, int amount, long expiresAt) {}
+    private record PendingSale(String material, int amount, long payout, long expiresAt) {}
     private record Bounty(String targetName, long amount) {}
     private record PendingTrade(UUID buyerUuid, UUID sellerUuid, String sellerName, String material, int amount,
                                 long total, long expiresAt) {}
