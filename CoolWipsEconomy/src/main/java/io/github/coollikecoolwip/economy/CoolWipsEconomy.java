@@ -73,7 +73,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Set<String> scheduledAutomaticSellChestRetries = ConcurrentHashMap.newKeySet();
     private static final long AUTOMATIC_SELL_CHEST_COOLDOWN_MS = 30_000L;
 
-    private static final long DEFAULT_FARM_INCOME_CAP = 5000L;
+    private static final long DEFAULT_MARKET_FREE_UNITS = 512L;
+    private static final long DEFAULT_MARKET_STEP_UNITS = 512L;
+    private static final BigDecimal DEFAULT_MARKET_DROP_PERCENT = new BigDecimal("0.10");
+    private static final BigDecimal DEFAULT_MARKET_MIN_MULTIPLIER = new BigDecimal("0.25");
+
     private static final Set<Material> FARM_INCOME_MATERIALS = EnumSet.of(
             Material.WHEAT, Material.WHEAT_SEEDS, Material.CARROT, Material.POTATO, Material.BEETROOT,
             Material.MELON_SLICE, Material.MELON, Material.PUMPKIN, Material.SUGAR_CANE, Material.BAMBOO,
@@ -82,8 +86,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Material.KELP, Material.DRIED_KELP, Material.DRIED_KELP_BLOCK, Material.APPLE, Material.BREAD,
             Material.COOKIE, Material.CAKE, Material.BAKED_POTATO, Material.PAPER, Material.BOOK,
             Material.BOOKSHELF, Material.CHEST, Material.BARREL, Material.STICK, Material.HAY_BLOCK,
-            Material.BONE_BLOCK, Material.NETHER_WART_BLOCK, Material.SLIME_BLOCK,
-            Material.TNT, Material.FIREWORK_ROCKET, Material.FIREWORK_STAR,
+            Material.BONE_BLOCK, Material.NETHER_WART_BLOCK, Material.SLIME_BLOCK, Material.TNT,
+            Material.FIREWORK_ROCKET, Material.FIREWORK_STAR,
             Material.BEEF, Material.PORKCHOP, Material.CHICKEN, Material.MUTTON, Material.RABBIT,
             Material.COD, Material.SALMON, Material.PUFFERFISH, Material.TROPICAL_FISH,
             Material.COOKED_BEEF, Material.COOKED_PORKCHOP, Material.COOKED_CHICKEN, Material.COOKED_MUTTON,
@@ -101,244 +105,108 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Material.SHORT_DRY_GRASS, Material.TALL_DRY_GRASS, Material.SHORT_GRASS, Material.TALL_GRASS,
             Material.FERN, Material.LARGE_FERN, Material.DEAD_BUSH, Material.SEAGRASS,
             Material.SMALL_DRIPLEAF, Material.BIG_DRIPLEAF, Material.HANGING_ROOTS, Material.SPORE_BLOSSOM,
-            Material.TORCHFLOWER, Material.PITCHER_PLANT, Material.CACTUS_FLOWER,
-            Material.OPEN_EYEBLOSSOM, Material.CLOSED_EYEBLOSSOM, Material.DANDELION,
-            Material.POPPY, Material.BLUE_ORCHID, Material.ALLIUM, Material.AZURE_BLUET,
-            Material.RED_TULIP, Material.ORANGE_TULIP, Material.WHITE_TULIP, Material.PINK_TULIP,
-            Material.OXEYE_DAISY, Material.CORNFLOWER, Material.LILY_OF_THE_VALLEY,
-            Material.SUNFLOWER, Material.LILAC, Material.ROSE_BUSH, Material.PEONY,
-            Material.BROWN_MUSHROOM, Material.RED_MUSHROOM, Material.VINE, Material.GLOW_LICHEN,
-            Material.LILY_PAD, Material.SEA_PICKLE,
+            Material.TORCHFLOWER, Material.PITCHER_PLANT, Material.CACTUS_FLOWER, Material.OPEN_EYEBLOSSOM,
+            Material.CLOSED_EYEBLOSSOM, Material.DANDELION, Material.POPPY, Material.BLUE_ORCHID,
+            Material.ALLIUM, Material.AZURE_BLUET, Material.RED_TULIP, Material.ORANGE_TULIP,
+            Material.WHITE_TULIP, Material.PINK_TULIP, Material.OXEYE_DAISY, Material.CORNFLOWER,
+            Material.LILY_OF_THE_VALLEY, Material.SUNFLOWER, Material.LILAC, Material.ROSE_BUSH,
+            Material.PEONY, Material.BROWN_MUSHROOM, Material.RED_MUSHROOM, Material.VINE,
+            Material.GLOW_LICHEN, Material.LILY_PAD, Material.SEA_PICKLE,
             Material.WHITE_WOOL, Material.ORANGE_WOOL, Material.MAGENTA_WOOL, Material.LIGHT_BLUE_WOOL,
             Material.YELLOW_WOOL, Material.LIME_WOOL, Material.PINK_WOOL, Material.GRAY_WOOL,
             Material.LIGHT_GRAY_WOOL, Material.CYAN_WOOL, Material.PURPLE_WOOL, Material.BLUE_WOOL,
             Material.BROWN_WOOL, Material.GREEN_WOOL, Material.RED_WOOL, Material.BLACK_WOOL,
             Material.TOTEM_OF_UNDYING
     );
+
     private static final Set<String> FARM_WOOD_PREFIXES = Set.of(
             "OAK", "SPRUCE", "BIRCH", "JUNGLE", "ACACIA", "DARK_OAK", "MANGROVE", "CHERRY",
             "PALE_OAK", "BAMBOO", "CRIMSON", "WARPED"
     );
-    private final Map<UUID, BigDecimal> farmIncomeUsed = new ConcurrentHashMap<>();
-    private final ReentrantLock farmIncomeLock = new ReentrantLock();
-    private File farmIncomeFile;
-    private YamlConfiguration farmIncomeData;
-    private long farmIncomeCap;
-    private String farmIncomeDay;
 
-    private static final Set<String> UNSAFE_SELL_MATERIALS = Set.of(
-            "BEDROCK", "BARRIER", "COMMAND_BLOCK", "CHAIN_COMMAND_BLOCK",
-            "REPEATING_COMMAND_BLOCK", "STRUCTURE_BLOCK", "STRUCTURE_VOID",
-            "JIGSAW", "SPAWNER", "TRIAL_SPAWNER", "VAULT",
-            "REINFORCED_DEEPSLATE", "END_PORTAL_FRAME", "END_PORTAL",
-            "END_GATEWAY", "LIGHT", "DEBUG_STICK", "KNOWLEDGE_BOOK"
-    );
+    private final Map<Material, Long> marketSoldToday = new ConcurrentHashMap<>();
+    private final ReentrantLock marketLock = new ReentrantLock();
+    private File marketFile;
+    private YamlConfiguration marketData;
+    private String marketDay;
+    private long marketFreeUnits;
+    private long marketStepUnits;
+    private BigDecimal marketDropPercent;
+    private BigDecimal marketMinMultiplier;
 
-    @Override public void onEnable() {
-        saveDefaultConfig();
-        loadSettings();
-        http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
-        sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
-        loadFarmIncomeLedger();
-        Bukkit.getPluginManager().registerEvents(this, this);
+    private record MarketSale(Material material, int amount, BigDecimal unitPrice, BigDecimal gross,
+                              boolean marketTracked) {}
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
-            PluginCommand c = getCommand(name);
-            if (c != null) {
-                c.setExecutor(this);
-                c.setTabCompleter(this);
-            }
-        }
-
-        getLogger().info("CoolWips Economy enabled. Sell prices: " + prices.size() +
-                ", shop prices: " + shopPrices.size() + ".");
-        if (tokenMissing()) getLogger().warning("Set your UnbelievaBoat API token in config.yml.");
-
-        loadRemotePrices();
-        loadRemoteShop();
-        startNonNegativeBalanceGuard();
-    }
-
-    @Override public void onDisable() {
-        saveFarmIncomeLedger();
-    }
-
-    private void loadSettings() {
-        reloadConfig();
-
-        token = getConfig().getString("api-token", "").trim();
-        guildId = getConfig().getString("guild-id", "").trim();
-        baseUrl = getConfig().getString("api.base-url", "https://unbelievaboat.com/api/v1").replaceAll("/+$", "");
-        reason = getConfig().getString("api.reason", "CoolWips SMP Minecraft sale");
-        buyReason = getConfig().getString("api.buy-reason", "CoolWips SMP Minecraft shop purchase");
-        pricesUrl = getConfig().getString("prices-url", DEFAULT_PRICES_URL).trim();
-        shopUrl = getConfig().getString("shop-url", DEFAULT_SHOP_URL).trim();
-        if (pricesUrl.isBlank()) pricesUrl = DEFAULT_PRICES_URL;
-        if (shopUrl.isBlank()) shopUrl = DEFAULT_SHOP_URL;
-
-        maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
-        maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
-        pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
-        transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
-        confirmationSeconds = Math.max(0, getConfig().getInt("settings.confirmation-seconds", 10));
-        minimumBounty = Math.max(1L, getConfig().getLong("settings.minimum-bounty", 100));
-        maximumBounty = Math.max(minimumBounty, getConfig().getLong("settings.maximum-bounty", 1000000));
-        sellTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.sell-tax", 0.05)));
-        buyTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.buy-tax", 0.05)));
-        farmIncomeCap = Math.max(0L, getConfig().getLong("settings.daily-farm-income-cap", DEFAULT_FARM_INCOME_CAP));
-
-        sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
-        maintenanceBlocks.clear();
-        for (String name : getConfig().getStringList("maintenance.blocked-items")) {
-            Material m = Material.matchMaterial(name.replace('-', '_').replace(' ', '_').toUpperCase(Locale.ROOT));
-            if (m != null) maintenanceBlocks.add(m);
-        }
-
-        prices.clear();
-        prices.putAll(readConfigSellPrices("prices"));
-
-        shopPrices.clear();
-        shopPrices.putAll(readConfigPrices("shop"));
-        validateShopPrices();
-        loadBounties();
-    }
-
-    private Map<Material, BigDecimal> readConfigSellPrices(String sectionName) {
-        Map<Material, BigDecimal> result = new HashMap<>();
-        var section = getConfig().getConfigurationSection(sectionName);
-        if (section == null) return result;
-
-        for (String key : section.getKeys(false)) {
-            Material m = Material.matchMaterial(key);
-            String raw = getConfig().getString(sectionName + "." + key, "");
-            try {
-                BigDecimal value = new BigDecimal(raw);
-                if (m != null && value.signum() > 0) result.put(m, value);
-            } catch (NumberFormatException ignored) {
-                getLogger().warning("Ignoring invalid sell price in config: " + key);
-            }
-        }
-        return result;
-    }
-
-    private Map<Material, Long> readConfigPrices(String sectionName) {
-        Map<Material, Long> result = new HashMap<>();
-        var section = getConfig().getConfigurationSection(sectionName);
-        if (section == null) return result;
-
-        for (String key : section.getKeys(false)) {
-            Material m = Material.matchMaterial(key);
-            long value = getConfig().getLong(sectionName + "." + key);
-            if (m != null && value > 0) result.put(m, value);
-        }
-        return result;
-    }
-
-    private int timeout() {
-        return Math.max(5, getConfig().getInt("api.timeout-seconds", 15));
-    }
-
-    private boolean tokenMissing() {
-        return token.isBlank()
-                || token.equalsIgnoreCase("PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE")
-                || guildId.isBlank();
-    }
-
-    private String userUrl(String discordId) {
-        return baseUrl + "/guilds/" + guildId + "/users/" + discordId;
-    }
-
-    private HttpResult api(String method, String url, String body) {
-        try {
-            HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(url))
-                    .timeout(Duration.ofSeconds(timeout()))
-                    .header("Authorization", token)
-                    .header("Accept", "application/json")
-                    .header("Content-Type", "application/json");
-
-            if ("PATCH".equals(method)) {
-                b.method("PATCH", HttpRequest.BodyPublishers.ofString(body));
-            } else {
-                b.GET();
-            }
-
-            HttpResponse<String> response = http.send(b.build(), HttpResponse.BodyHandlers.ofString());
-            return new HttpResult(response.statusCode(), response.body());
-        } catch (Exception e) {
-            return new HttpResult(0, e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage());
-        }
-    }
-
-    private void loadFarmIncomeLedger() {
-        farmIncomeLock.lock();
+    private void loadMarketLedger() {
+        marketLock.lock();
         try {
             if (!getDataFolder().exists() && !getDataFolder().mkdirs()) {
-                getLogger().warning("Could not create plugin data folder for farm-income ledger.");
+                getLogger().warning("Could not create plugin data folder for market ledger.");
             }
-            farmIncomeFile = new File(getDataFolder(), "farm-income.yml");
-            farmIncomeData = YamlConfiguration.loadConfiguration(farmIncomeFile);
-            farmIncomeDay = LocalDate.now(ZoneId.systemDefault()).toString();
+            marketFile = new File(getDataFolder(), "market.yml");
+            marketData = YamlConfiguration.loadConfiguration(marketFile);
+            marketDay = LocalDate.now(ZoneId.systemDefault()).toString();
 
-            String storedDay = farmIncomeData.getString("day", "");
-            if (!farmIncomeDay.equals(storedDay)) {
-                farmIncomeUsed.clear();
-                farmIncomeData.set("used", null);
-                farmIncomeData.set("day", farmIncomeDay);
-                saveFarmIncomeLedgerLocked();
+            String storedDay = marketData.getString("day", "");
+            if (!marketDay.equals(storedDay)) {
+                marketSoldToday.clear();
+                marketData.set("sold", null);
+                marketData.set("day", marketDay);
+                saveMarketLedgerLocked();
                 return;
             }
 
-            for (String key : farmIncomeData.getConfigurationSection("used") == null
-                    ? Collections.<String>emptyList()
-                    : farmIncomeData.getConfigurationSection("used").getKeys(false)) {
-                try {
-                    UUID uuid = UUID.fromString(key);
-                    BigDecimal used = new BigDecimal(farmIncomeData.getString("used." + key, "0"));
-                    if (used.signum() > 0) farmIncomeUsed.put(uuid, used);
-                } catch (Exception ignored) {
-                    getLogger().warning("Ignoring invalid farm-income ledger entry: " + key);
+            var section = marketData.getConfigurationSection("sold");
+            if (section != null) {
+                for (String key : section.getKeys(false)) {
+                    try {
+                        Material material = Material.matchMaterial(key);
+                        long sold = Long.parseLong(marketData.getString("sold." + key, "0"));
+                        if (material != null && sold > 0) marketSoldToday.put(material, sold);
+                    } catch (Exception ignored) {
+                        getLogger().warning("Ignoring invalid market ledger entry: " + key);
+                    }
                 }
             }
         } finally {
-            farmIncomeLock.unlock();
+            marketLock.unlock();
         }
     }
 
-    private void saveFarmIncomeLedger() {
-        farmIncomeLock.lock();
+    private void saveMarketLedger() {
+        marketLock.lock();
         try {
-            saveFarmIncomeLedgerLocked();
+            saveMarketLedgerLocked();
         } finally {
-            farmIncomeLock.unlock();
+            marketLock.unlock();
         }
     }
 
-    private void saveFarmIncomeLedgerLocked() {
-        if (farmIncomeFile == null || farmIncomeData == null) return;
-        farmIncomeData.set("day", farmIncomeDay);
-        farmIncomeData.set("used", null);
-        for (Map.Entry<UUID, BigDecimal> entry : farmIncomeUsed.entrySet()) {
-            farmIncomeData.set("used." + entry.getKey(), entry.getValue().toPlainString());
+    private void saveMarketLedgerLocked() {
+        if (marketFile == null || marketData == null) return;
+        marketData.set("day", marketDay);
+        marketData.set("sold", null);
+        for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
+            marketData.set("sold." + entry.getKey().name(), entry.getValue());
         }
         try {
-            farmIncomeData.save(farmIncomeFile);
+            marketData.save(marketFile);
         } catch (IOException e) {
-            getLogger().warning("Could not save farm-income ledger: " + e.getMessage());
+            getLogger().warning("Could not save market ledger: " + e.getMessage());
         }
     }
 
-    private void refreshFarmIncomeDayLocked() {
+    private void refreshMarketDayLocked() {
         String today = LocalDate.now(ZoneId.systemDefault()).toString();
-        if (today.equals(farmIncomeDay)) return;
-        farmIncomeDay = today;
-        farmIncomeUsed.clear();
-        saveFarmIncomeLedgerLocked();
+        if (today.equals(marketDay)) return;
+        marketDay = today;
+        marketSoldToday.clear();
+        saveMarketLedgerLocked();
     }
 
     private boolean isFarmIncomeMaterial(Material material) {
         if (material == null) return false;
         if (FARM_INCOME_MATERIALS.contains(material)) return true;
-
         String name = material.name();
         for (String prefix : FARM_WOOD_PREFIXES) {
             if (name.startsWith(prefix + "_") || name.equals(prefix)) return true;
@@ -346,55 +214,126 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return name.contains("WOOL") || name.endsWith("_CARPET") || name.endsWith("_BED");
     }
 
-    private BigDecimal remainingFarmIncome(UUID uuid) {
-        farmIncomeLock.lock();
+    private BigDecimal marketUnitPrice(Material material, long sold) {
+        BigDecimal base = prices.get(material);
+        if (base == null || !isFarmIncomeMaterial(material)) return base;
+        if (sold <= marketFreeUnits || marketStepUnits <= 0 || marketDropPercent.signum() <= 0) return base;
+
+        long steps = 1L + (sold - marketFreeUnits) / marketStepUnits;
+        BigDecimal multiplier = BigDecimal.ONE.subtract(marketDropPercent)
+                .pow((int) Math.min(steps, 1000L));
+        if (multiplier.compareTo(marketMinMultiplier) < 0) multiplier = marketMinMultiplier;
+        return base.multiply(multiplier);
+    }
+
+    private BigDecimal currentSellPrice(Material material) {
+        BigDecimal base = prices.get(material);
+        if (base == null || !isFarmIncomeMaterial(material)) return base;
+        marketLock.lock();
         try {
-            refreshFarmIncomeDayLocked();
-            BigDecimal used = farmIncomeUsed.getOrDefault(uuid, BigDecimal.ZERO);
-            BigDecimal remaining = BigDecimal.valueOf(farmIncomeCap).subtract(used);
-            return remaining.signum() > 0 ? remaining : BigDecimal.ZERO;
+            refreshMarketDayLocked();
+            return marketUnitPrice(material, marketSoldToday.getOrDefault(material, 0L));
         } finally {
-            farmIncomeLock.unlock();
+            marketLock.unlock();
         }
     }
 
-    private boolean reserveFarmIncome(UUID uuid, BigDecimal gross) {
-        if (gross == null || gross.signum() <= 0 || farmIncomeCap <= 0) return true;
-        farmIncomeLock.lock();
+    private MarketSale reserveMarketSale(Material material, int amount) {
+        BigDecimal base = prices.get(material);
+        if (base == null || amount <= 0) return null;
+        if (!isFarmIncomeMaterial(material)) {
+            return new MarketSale(material, amount, base,
+                    base.multiply(BigDecimal.valueOf(amount)), false);
+        }
+
+        marketLock.lock();
         try {
-            refreshFarmIncomeDayLocked();
-            BigDecimal used = farmIncomeUsed.getOrDefault(uuid, BigDecimal.ZERO);
-            BigDecimal cap = BigDecimal.valueOf(farmIncomeCap);
-            if (used.add(gross).compareTo(cap) > 0) return false;
-            farmIncomeUsed.put(uuid, used.add(gross));
-            saveFarmIncomeLedgerLocked();
-            return true;
+            refreshMarketDayLocked();
+            long sold = marketSoldToday.getOrDefault(material, 0L);
+            BigDecimal unit = marketUnitPrice(material, sold);
+            long newSold;
+            try {
+                newSold = Math.addExact(sold, amount);
+            } catch (ArithmeticException e) {
+                return null;
+            }
+            marketSoldToday.put(material, newSold);
+            saveMarketLedgerLocked();
+            return new MarketSale(material, amount, unit,
+                    unit.multiply(BigDecimal.valueOf(amount)), true);
         } finally {
-            farmIncomeLock.unlock();
+            marketLock.unlock();
         }
     }
 
-    private void releaseFarmIncome(UUID uuid, BigDecimal gross) {
-        if (gross == null || gross.signum() <= 0 || farmIncomeCap <= 0) return;
-        farmIncomeLock.lock();
+    private Map<Material, MarketSale> reserveMarketBatch(Map<Material, Integer> amounts) {
+        Map<Material, MarketSale> result = new LinkedHashMap<>();
+        marketLock.lock();
         try {
-            refreshFarmIncomeDayLocked();
-            BigDecimal used = farmIncomeUsed.getOrDefault(uuid, BigDecimal.ZERO)
-                    .subtract(gross).max(BigDecimal.ZERO);
-            if (used.signum() == 0) farmIncomeUsed.remove(uuid);
-            else farmIncomeUsed.put(uuid, used);
-            saveFarmIncomeLedgerLocked();
+            refreshMarketDayLocked();
+            Map<Material, Long> newTotals = new HashMap<>();
+
+            for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
+                Material material = entry.getKey();
+                int amount = entry.getValue();
+                BigDecimal base = prices.get(material);
+                if (base == null || amount <= 0) continue;
+
+                boolean tracked = isFarmIncomeMaterial(material);
+                long sold = marketSoldToday.getOrDefault(material, 0L);
+                BigDecimal unit = tracked ? marketUnitPrice(material, sold) : base;
+                if (tracked) {
+                    try {
+                        newTotals.put(material, Math.addExact(sold, amount));
+                    } catch (ArithmeticException e) {
+                        return Collections.emptyMap();
+                    }
+                }
+                result.put(material, new MarketSale(material, amount, unit,
+                        unit.multiply(BigDecimal.valueOf(amount)), tracked));
+            }
+
+            for (Map.Entry<Material, Long> entry : newTotals.entrySet()) {
+                marketSoldToday.put(entry.getKey(), entry.getValue());
+            }
+            if (!newTotals.isEmpty()) saveMarketLedgerLocked();
+            return result;
         } finally {
-            farmIncomeLock.unlock();
+            marketLock.unlock();
         }
     }
 
-    private int farmAllowedAmount(UUID uuid, Material material, int requested, BigDecimal unit) {
-        if (!isFarmIncomeMaterial(material) || farmIncomeCap <= 0) return requested;
-        BigDecimal remaining = remainingFarmIncome(uuid);
-        if (remaining.compareTo(unit) < 0) return 0;
-        BigDecimal maxAmount = remaining.divide(unit, 0, RoundingMode.FLOOR);
-        return Math.min(requested, maxAmount.min(BigDecimal.valueOf(Integer.MAX_VALUE)).intValue());
+    private void releaseMarketSale(MarketSale sale) {
+        if (sale == null || !sale.marketTracked()) return;
+        marketLock.lock();
+        try {
+            refreshMarketDayLocked();
+            long current = marketSoldToday.getOrDefault(sale.material(), 0L);
+            long restored = Math.max(0L, current - sale.amount());
+            if (restored == 0L) marketSoldToday.remove(sale.material());
+            else marketSoldToday.put(sale.material(), restored);
+            saveMarketLedgerLocked();
+        } finally {
+            marketLock.unlock();
+        }
+    }
+
+    private void releaseMarketBatch(Map<Material, MarketSale> sales) {
+        if (sales == null || sales.isEmpty()) return;
+        marketLock.lock();
+        try {
+            refreshMarketDayLocked();
+            for (MarketSale sale : sales.values()) {
+                if (!sale.marketTracked()) continue;
+                long current = marketSoldToday.getOrDefault(sale.material(), 0L);
+                long restored = Math.max(0L, current - sale.amount());
+                if (restored == 0L) marketSoldToday.remove(sale.material());
+                else marketSoldToday.put(sale.material(), restored);
+            }
+            saveMarketLedgerLocked();
+        } finally {
+            marketLock.unlock();
+        }
     }
 
     private void loadRemotePrices() {
@@ -814,7 +753,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case "prices" -> {
                 int page = parsePage(sender, args);
                 if (page < 1) return true;
-                showPaged(sender, prices, page, "CoolWips Sell Prices", "/prices");
+                showPaged(sender, currentSellPrices(), page, "CoolWips Sell Prices", "/prices");
                 return true;
             }
 
@@ -889,7 +828,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private boolean isCraftingConversionSafe(ItemStack[] matrix, ItemStack result) {
         if (result == null || result.getType().isAir() || result.getAmount() <= 0) return true;
 
-        BigDecimal resultSell = prices.get(result.getType());
+        BigDecimal resultSell = currentSellPrice(result.getType());
         if (resultSell == null) return true;
 
         BigDecimal inputBuyCost = BigDecimal.ZERO;
@@ -912,7 +851,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                                 .multiply(BigDecimal.ONE.add(BigDecimal.valueOf(buyTax))));
             }
 
-            BigDecimal sellUnit = prices.get(input.getType());
+            BigDecimal sellUnit = currentSellPrice(input.getType());
             if (sellUnit == null) {
                 allInputsSellable = false;
             } else {
@@ -1183,10 +1122,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
-        BigDecimal gross = BigDecimal.ZERO;
-        BigDecimal farmGross = BigDecimal.ZERO;
-        BigDecimal remainingFarmGross = remainingFarmIncome(info.owner());
-
         // Sell up to the same per-transaction item limit used by /sell and /sellall.
         // Do not reject the entire chest just because it contains more than maxItems.
         for (ItemStack stack : inventory.getContents()) {
@@ -1198,34 +1133,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (remainingCapacity <= 0) break;
 
             int amount = Math.min(stack.getAmount(), remainingCapacity);
-            if (isFarmIncomeMaterial(stack.getType())) {
-                if (remainingFarmGross.compareTo(unit) < 0) continue;
-                BigDecimal allowed = remainingFarmGross.divide(unit, 0, RoundingMode.FLOOR);
-                amount = Math.min(amount, allowed.min(BigDecimal.valueOf(Integer.MAX_VALUE)).intValue());
-                if (amount <= 0) continue;
-                farmGross = farmGross.add(unit.multiply(BigDecimal.valueOf(amount)));
-                remainingFarmGross = remainingFarmGross.subtract(unit.multiply(BigDecimal.valueOf(amount)));
-            }
-            try {
-                gross = gross.add(unit.multiply(BigDecimal.valueOf(amount)));
-            } catch (ArithmeticException e) {
-                playerLock.unlock();
-                lock.unlock();
-                return;
-            }
-
             totalItems += amount;
             amounts.merge(stack.getType(), amount, Integer::sum);
         }
 
-        if (amounts.isEmpty() || gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
-            playerLock.unlock();
-            lock.unlock();
-            return;
-        }
-
-        long payout = afterTax(gross, sellTax);
-        if (payout < 1) {
+        if (amounts.isEmpty()) {
             playerLock.unlock();
             lock.unlock();
             return;
@@ -1266,7 +1178,28 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         inventory.setContents(contents);
 
-        if (!reserveFarmIncome(info.owner(), farmGross)) {
+        Map<Material, MarketSale> marketSales = reserveMarketBatch(amounts);
+        if (marketSales.size() != amounts.size()) {
+            restoreChestItems(inventory, removed);
+            playerLock.unlock();
+            lock.unlock();
+            return;
+        }
+
+        BigDecimal gross = marketSales.values().stream()
+                .map(MarketSale::gross)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+        if (gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0) {
+            releaseMarketBatch(marketSales);
+            restoreChestItems(inventory, removed);
+            playerLock.unlock();
+            lock.unlock();
+            return;
+        }
+
+        long payout = afterTax(gross, sellTax);
+        if (payout < 1) {
+            releaseMarketBatch(marketSales);
             restoreChestItems(inventory, removed);
             playerLock.unlock();
             lock.unlock();
@@ -1275,7 +1208,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         String discordId = linkedId(info.owner());
         if (discordId == null) {
-            releaseFarmIncome(info.owner(), farmGross);
+            releaseMarketBatch(marketSales);
             restoreChestItems(inventory, removed);
             playerLock.unlock();
             lock.unlock();
@@ -1304,8 +1237,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
                 for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
-                    BigDecimal itemGross = prices.get(entry.getKey()).multiply(BigDecimal.valueOf(entry.getValue()));
-                    long itemPayout = afterTax(itemGross, sellTax);
+                    MarketSale sale = marketSales.get(entry.getKey());
+                    long itemPayout = afterTax(sale.gross(), sellTax);
                     record(new Transaction(info.owner(), Bukkit.getOfflinePlayer(info.owner()).getName(),
                             entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
                 }
@@ -1501,7 +1434,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        BigDecimal unit = prices.get(material);
+        BigDecimal unit = currentSellPrice(material);
         if (unit == null) {
             p.sendMessage("§cThat item cannot be sold. Use /prices.");
             return;
@@ -1513,17 +1446,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (amount > maxItems) {
             p.sendMessage("§cYou can sell at most " + maxItems + " items at once.");
             return;
-        }
-
-        int originalAmount = amount;
-        amount = farmAllowedAmount(p.getUniqueId(), material, amount, unit);
-        if (amount < 1) {
-            p.sendMessage("§cYour daily renewable-farm income limit of $" + money(farmIncomeCap) + " has been reached.");
-            return;
-        }
-        if (amount < originalAmount) {
-            p.sendMessage("§eDaily farm-income limit reached soon. You can sell only " + amount
-                    + "x " + pretty(material) + " in this sale.");
         }
 
         BigDecimal gross = unit.multiply(BigDecimal.valueOf(amount));
@@ -1540,7 +1462,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         if (requested != -2 && confirmationSeconds > 0 && payout >= 10000) {
             pendingSales.put(p.getUniqueId(),
-                    new PendingSale(material.name(), amount, payout,
+                    new PendingSale(material.name(), amount,
                             System.currentTimeMillis() + confirmationSeconds * 1000L));
             p.sendMessage("§eConfirm sale: §f/sell confirm §7to sell " + amount + "x "
                     + pretty(material) + " for §a$" + money(payout)
@@ -1562,11 +1484,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        p.sendMessage("§7Selling §f" + amount + "x " + pretty(material)
-                + " §7for §a$" + money(payout) + " §7after tax...");
-
         final int finalAmount = amount;
-        final long finalMoney = payout;
         final Material finalMaterial = material;
         final Location returnLocation = p.getLocation().clone();
 
@@ -1580,19 +1498,29 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        final BigDecimal finalFarmGross = isFarmIncomeMaterial(finalMaterial) ? unit.multiply(BigDecimal.valueOf(finalAmount)) : BigDecimal.ZERO;
-        if (!reserveFarmIncome(p.getUniqueId(), finalFarmGross)) {
+        final MarketSale marketSale = reserveMarketSale(finalMaterial, finalAmount);
+        if (marketSale == null) {
             restoreItems(p, removed);
             lock.unlock();
-            p.sendMessage("§cSale cancelled. Your daily renewable-farm income limit has been reached.");
+            p.sendMessage("§cSale cancelled because the market price could not be reserved.");
             return;
         }
+        final long finalMoney = afterTax(marketSale.gross(), sellTax);
+        if (marketSale.gross().compareTo(BigDecimal.valueOf(maxMoney)) > 0 || finalMoney < 1) {
+            releaseMarketSale(marketSale);
+            restoreItems(p, removed);
+            lock.unlock();
+            p.sendMessage("§cSale cancelled because the current market price exceeds the transaction limits.");
+            return;
+        }
+        p.sendMessage("§7Selling §f" + finalAmount + "x " + pretty(finalMaterial)
+                + " §7for §a$" + money(finalMoney) + " §7after tax...");
 
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Long before = bankBalance(discordId);
             if (before == null) {
                 Bukkit.getScheduler().runTask(this, () -> {
-                    releaseFarmIncome(p.getUniqueId(), finalFarmGross);
+                    releaseMarketSale(marketSale);
                     if (p.isOnline()) restoreItems(p, removed);
                     else if (returnLocation.getWorld() != null)
                         for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
@@ -2608,7 +2536,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
-    private record PendingSale(String material, int amount, long payout, long expiresAt) {}
+    private record PendingSale(String material, int amount, long expiresAt) {}
     private record Bounty(String targetName, long amount) {}
     private record PendingTrade(UUID buyerUuid, UUID sellerUuid, String sellerName, String material, int amount,
                                 long total, long expiresAt) {}
@@ -2703,7 +2631,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Sell prices: §f" + prices.size());
         sender.sendMessage("§7Shop prices: §f" + shopPrices.size());
         sender.sendMessage("§7Sell maintenance: " + (sellsDisabled ? "§cBLOCKED" : "§aENABLED"));
-        sender.sendMessage("§7Daily renewable-farm cap: §f$" + money(farmIncomeCap));
+        sender.sendMessage("§7Dynamic renewable market: §aenabled");
+        sender.sendMessage("§7Full-price volume per item: §f" + marketFreeUnits + " units/day");
+        sender.sendMessage("§7Price drop per step: §f" + marketDropPercent.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%");
+        sender.sendMessage("§7Minimum market price: §f" + marketMinMultiplier.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "% of base");
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
 
@@ -2716,6 +2647,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                             ? "§aUnbelievaBoat API: connected"
                             : "§cUnbelievaBoat API: HTTP " + result.status));
         });
+    }
+
+    private Map<Material, BigDecimal> currentSellPrices() {
+        Map<Material, BigDecimal> snapshot = new HashMap<>();
+        for (Material material : prices.keySet()) {
+            BigDecimal value = currentSellPrice(material);
+            if (value != null) snapshot.put(material, value);
+        }
+        return snapshot;
     }
 
     private void showPaged(CommandSender sender, Map<Material, ?> map,
