@@ -1677,76 +1677,148 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         final Material finalMaterial = material;
         final Location returnLocation = p.getLocation().clone();
 
-        // Remove the items before issuing the money credit. This prevents a crash or
-        // transaction race from ever creating money without consuming the items.
-        List<ItemStack> removed = takeItems(p, finalMaterial, finalAmount);
-        if (removed.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
-            restoreItems(p, removed);
-            lock.unlock();
-            p.sendMessage("§cSale cancelled because the item transfer could not be completed.");
-            return;
-        }
-
-        final MarketSale marketSale = reserveMarketSale(finalMaterial, finalAmount);
-        if (marketSale == null) {
-            restoreItems(p, removed);
-            lock.unlock();
-            p.sendMessage("§cSale cancelled because the market price could not be reserved.");
-            return;
-        }
-        final long finalMoney = afterTax(marketSale.gross(), sellTax);
-        if (marketSale.gross().compareTo(BigDecimal.valueOf(maxMoney)) > 0 || finalMoney < 1) {
-            releaseMarketSale(marketSale);
-            restoreItems(p, removed);
-            lock.unlock();
-            p.sendMessage("§cSale cancelled because the current market price exceeds the transaction limits.");
-            return;
-        }
-        p.sendMessage("§7Selling §f" + finalAmount + "x " + pretty(finalMaterial)
-                + " §7for §a$" + money(finalMoney) + " §7after tax...");
-
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            Long before = bankBalance(discordId);
-            if (before == null) {
-                Bukkit.getScheduler().runTask(this, () -> {
-                    releaseMarketSale(marketSale);
-                    if (p.isOnline()) restoreItems(p, removed);
-                    else if (returnLocation.getWorld() != null)
-                        for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
-                    lock.unlock();
-                    if (p.isOnline()) p.sendMessage("§cSale cancelled. Your balance could not be verified.");
-                });
+        List<ItemStack> removed = new ArrayList<>();
+        MarketSale marketSale = null;
+        try {
+            // Remove the items before issuing the money credit. The sale has a complete
+            // rollback path, so failures before a confirmed payout return the items.
+            removed = takeItems(p, finalMaterial, finalAmount);
+            if (removed.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
+                restoreItems(p, removed);
+                lock.unlock();
+                p.sendMessage("§cSale cancelled because the item transfer could not be completed.");
                 return;
             }
 
-            BankMutationResult mutation = changeBank(discordId, finalMoney, reason, before);
-
-            Bukkit.getScheduler().runTask(this, () -> {
-                if (mutation.state() == BankMutationState.NOT_APPLIED) {
-                    releaseMarketSale(marketSale);
-                    if (p.isOnline()) restoreItems(p, removed);
-                    else if (returnLocation.getWorld() != null)
-                        for (ItemStack item : removed) returnLocation.getWorld().dropItemNaturally(returnLocation, item);
-                    lock.unlock();
-                    if (p.isOnline()) p.sendMessage("§cSale cancelled. No money was added; your items were returned.");
-                    return;
-                }
-
-                if (mutation.state() == BankMutationState.UNKNOWN) {
-                    lock.unlock();
-                    if (p.isOnline()) p.sendMessage("§cSale could not be verified. Do not retry; contact staff.");
-                    return;
-                }
-
-                record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
-                        finalAmount, finalMoney, false, new java.util.Date().toString()));
-                if (p.isOnline()) {
-                    p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
-                            + " §afor §a$" + money(finalMoney) + "§a.");
-                }
+            marketSale = reserveMarketSale(finalMaterial, finalAmount);
+            if (marketSale == null) {
+                restoreItems(p, removed);
                 lock.unlock();
+                p.sendMessage("§cSale cancelled because the market price could not be reserved.");
+                return;
+            }
+
+            final long finalMoney = afterTax(marketSale.gross(), sellTax);
+            if (marketSale.gross().compareTo(BigDecimal.valueOf(maxMoney)) > 0 || finalMoney < 1) {
+                releaseMarketSale(marketSale);
+                restoreItems(p, removed);
+                lock.unlock();
+                p.sendMessage("§cSale cancelled because the current market price exceeds the transaction limits.");
+                return;
+            }
+
+            p.sendMessage("§7Selling §f" + finalAmount + "x " + pretty(finalMaterial)
+                    + " §7for §a$" + money(finalMoney) + " §7after tax...");
+
+            final MarketSale finalMarketSale = marketSale;
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                BankMutationResult mutation;
+                try {
+                    Long before = bankBalance(discordId);
+                    if (before == null) {
+                        Bukkit.getScheduler().runTask(this, () -> {
+                            failSellTransaction(p, returnLocation, removed, finalMarketSale);
+                            if (lock.isHeldByCurrentThread()) lock.unlock();
+                            if (p.isOnline()) p.sendMessage("§cSale cancelled. Your balance could not be verified.");
+                        });
+                        return;
+                    }
+
+                    mutation = changeBank(discordId, finalMoney, reason, before);
+                } catch (RuntimeException e) {
+                    getLogger().log(java.util.logging.Level.SEVERE,
+                            "Unexpected exception while processing a sale for " + p.getName() + ".", e);
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        failSellTransaction(p, returnLocation, removed, finalMarketSale);
+                        if (lock.isHeldByCurrentThread()) lock.unlock();
+                        if (p.isOnline()) p.sendMessage("§cSale cancelled because an internal error occurred. Your items were returned.");
+                    });
+                    return;
+                }
+
+                Bukkit.getScheduler().runTask(this, () -> {
+                    try {
+                        if (mutation.state() == BankMutationState.NOT_APPLIED) {
+                            failSellTransaction(p, returnLocation, removed, finalMarketSale);
+                            lock.unlock();
+                            if (p.isOnline()) p.sendMessage("§cSale cancelled. No money was added; your items were returned.");
+                            return;
+                        }
+
+                        if (mutation.state() == BankMutationState.UNKNOWN) {
+                            lock.unlock();
+                            if (p.isOnline()) p.sendMessage("§cSale could not be verified. Do not retry; contact staff.");
+                            return;
+                        }
+
+                        record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
+                                finalAmount, finalMoney, false, new java.util.Date().toString()));
+                        if (p.isOnline()) {
+                            p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
+                                    + " §afor §a$" + money(finalMoney) + "§a.");
+                        }
+                        lock.unlock();
+                    } catch (RuntimeException e) {
+                        getLogger().log(java.util.logging.Level.SEVERE,
+                                "Unexpected exception while finishing a sale for " + p.getName()
+                                        + " (bank state " + mutation.state() + ").", e);
+
+                        // Never restore items after an uncertain/applied bank mutation:
+                        // doing so could duplicate a successful payout.
+                        if (mutation.state() == BankMutationState.NOT_APPLIED) {
+                            failSellTransaction(p, returnLocation, removed, finalMarketSale);
+                        }
+                        if (lock.isHeldByCurrentThread()) lock.unlock();
+
+                        if (p.isOnline()) {
+                            p.sendMessage(mutation.state() == BankMutationState.NOT_APPLIED
+                                    ? "§cSale failed safely. Your items were returned."
+                                    : "§cSale completed, but the confirmation message failed. Check your balance before retrying.");
+                        }
+                    }
+                });
             });
-        });
+        } catch (RuntimeException e) {
+            getLogger().log(java.util.logging.Level.SEVERE,
+                    "Unexpected exception while preparing a sale for " + p.getName() + ".", e);
+            if (marketSale != null) {
+                releaseMarketSale(marketSale);
+            }
+            if (!removed.isEmpty()) {
+                restoreItems(p, removed);
+            }
+            if (lock.isHeldByCurrentThread()) lock.unlock();
+            p.sendMessage("§cSale cancelled because an internal error occurred. Your items were returned.");
+        }
+    }
+
+    private void failSellTransaction(Player p, Location returnLocation, List<ItemStack> removed, MarketSale marketSale) {
+        try {
+            if (marketSale != null) releaseMarketSale(marketSale);
+        } catch (RuntimeException e) {
+            getLogger().log(java.util.logging.Level.SEVERE, "Could not release market reservation during sale rollback.", e);
+        }
+
+        try {
+            if (p.isOnline()) {
+                restoreItems(p, removed);
+            } else if (returnLocation != null && returnLocation.getWorld() != null) {
+                for (ItemStack item : removed) {
+                    returnLocation.getWorld().dropItemNaturally(returnLocation, item);
+                }
+            }
+        } catch (RuntimeException e) {
+            getLogger().log(java.util.logging.Level.SEVERE, "Could not restore items during sale rollback.", e);
+            if (!p.isOnline() && returnLocation != null && returnLocation.getWorld() != null) {
+                for (ItemStack item : removed) {
+                    try {
+                        returnLocation.getWorld().dropItemNaturally(returnLocation, item);
+                    } catch (RuntimeException ignored) {
+                        getLogger().severe("Emergency item restoration also failed for " + p.getName() + ".");
+                    }
+                }
+            }
+        }
     }
 
     private void createTrade(Player buyer, String targetName, String rawItem, int amount) {
