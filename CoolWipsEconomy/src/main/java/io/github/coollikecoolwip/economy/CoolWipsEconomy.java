@@ -205,6 +205,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 .max(BigDecimal.ZERO).min(new BigDecimal("0.99"));
         marketMinPrice = parseDecimalSetting("settings.market-min-price", DEFAULT_MARKET_MIN_PRICE)
                 .max(BigDecimal.ZERO);
+        marketMossMinPrice = parseDecimalSetting("settings.market-moss-min-price", new BigDecimal("0.017"))
+                .max(BigDecimal.ZERO);
 
         sellsDisabled = getConfig().getBoolean("maintenance.all-sells-disabled", false);
         maintenanceBlocks.clear();
@@ -383,7 +385,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         BigDecimal multiplier = BigDecimal.ONE.subtract(marketDropPercent)
                 .pow((int) Math.min(steps, 1000L));
         BigDecimal price = base.multiply(multiplier);
-        BigDecimal floor = material == Material.MOSS_BLOCK ? marketMossMinPrice : marketMinPrice;
+        BigDecimal floor = material == Material.MOSS_BLOCK
+                ? (marketMossMinPrice == null ? new BigDecimal("0.017") : marketMossMinPrice)
+                : marketMinPrice;
         if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) {
             price = floor;
         }
@@ -443,6 +447,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             saveMarketLedgerLocked();
             return new MarketSale(material, amount, gross, true);
         } catch (ArithmeticException e) {
+            return null;
+        } catch (RuntimeException e) {
+            getLogger().warning("Could not reserve market sale for " + material + ": " + e.getMessage());
             return null;
         } finally {
             marketLock.unlock();
