@@ -1466,6 +1466,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return true;
                 }
 
+                if (args[0].equalsIgnoreCase("stats")) {
+                    economyStats(sender);
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("audit")) {
+                    economyAudit(sender);
+                    return true;
+                }
+
                 if (args[0].equalsIgnoreCase("status")) {
                     status(sender);
                     return true;
@@ -1842,6 +1852,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     long itemPayout = afterTax(sale.gross(), sellTax);
                     record(new Transaction(info.owner(), chestSellerName,
                             entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
+                    recordEconomyCreated(info.owner(), chestSellerName, entry.getKey(), entry.getValue(), itemPayout, "SELL_CHEST");
                     getLogger().info("SELL_CHEST | seller=" + chestSellerName
                             + " | item=" + entry.getKey().name()
                             + " | amount=" + entry.getValue()
@@ -2199,6 +2210,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                         record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
                                 finalAmount, finalMoney, false, new java.util.Date().toString()));
+                        recordEconomyCreated(p.getUniqueId(), p.getName(), finalMaterial, finalAmount, finalMoney, "SELL");
                         getLogger().info("SALE | seller=" + p.getName()
                                 + " | item=" + finalMaterial.name()
                                 + " | amount=" + finalAmount
@@ -2942,6 +2954,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
                         amount, money, true, new java.util.Date().toString()));
+                recordEconomyRemoved(p.getUniqueId(), p.getName(), finalMaterial, amount, money, "SHOP");
                 p.sendMessage("§aBought §f" + amount + "x " + pretty(finalMaterial)
                         + " §afor §c$" + money + "§a.");
                 lock.unlock();
@@ -3350,6 +3363,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Price drop per step: §f" + marketDropPercent.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%");
         sender.sendMessage("§7Minimum market price: §f$" + marketMinPrice.stripTrailingZeros().toPlainString());
         sender.sendMessage("§7Custom market rules: §f" + marketRules.size() + " (per-player market)");
+        sender.sendMessage("§7Economy stats: §f/cweconomy stats");
+        sender.sendMessage("§7Economy audit: §f/cweconomy audit");
         sender.sendMessage("§7Market rules URL: §f" + marketRulesUrl);
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
@@ -3531,7 +3546,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         if (name.equals("cweconomy") && args.length == 1) {
-            return List.of("reload", "status", "maintenance");
+            return List.of("reload", "status", "stats", "audit", "maintenance");
         }
 
         if (name.equals("cweconomy") && args.length == 2
