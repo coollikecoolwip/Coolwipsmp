@@ -1,4 +1,4 @@
-# CoolWips Economy 1.1.20
+# CoolWips Economy 1.3.1
 
 Simple Paper 26.2 economy plugin for CoolWips SMP.
 
@@ -29,6 +29,10 @@ Commands:
 - /sellchest create|remove|status
 - /cweconomy reload
 - /cweconomy status
+- /cweconomy stats
+- /cweconomy audit
+- /cweconomy market <player> [item] (operator)
+- /cweconomy resetmarket <player> [item] (operator)
 
 Players must already be linked through DiscordSRV. The plugin uses the linked Discord ID for UnbelievaBoat.
 
@@ -39,3 +43,9 @@ Sales and purchases are serialized per player. The configured buy tax is applied
 Edit prices.txt in this folder on GitHub, then run /cweconomy reload.
 
 Sell chests: use `/sellchest create` while looking at a chest. Put items with a sell price inside, then close the chest. The priced items are automatically sold for the normal `/sell` price after tax; items without a sell price stay in the chest. Only the owner can open or break the sell chest (operators can manage it).
+
+### Economy integrity
+
+The dynamic market is tracked independently for each player and item. One player's high-volume farm cannot lower another player's sell price. The plugin keeps a high-water mark for each player/item so failed rollbacks cannot raise a farm's price unexpectedly during the same day. Crafting, stonecutting, and cooking conversions are audited at startup/reload so configured sell prices cannot create a simple conversion loop; shop prices are also checked with exact decimal arithmetic.
+
+Confirmed server money creation/removal and player-to-player transfers are recorded in the daily economy statistics and a bounded economy-ledger.log file in the plugin data folder. Use /cweconomy stats and /cweconomy audit for routine checks.
