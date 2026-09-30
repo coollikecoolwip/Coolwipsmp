@@ -1214,6 +1214,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 destination.clear();
                 destination.putAll(loaded);
+                validateCraftingEconomy();
                 validateShopPrices();
                 getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
             } catch (Exception e) {
