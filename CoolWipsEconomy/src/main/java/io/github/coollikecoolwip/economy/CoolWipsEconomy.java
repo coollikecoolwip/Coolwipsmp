@@ -54,10 +54,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<UUID, Long> lastTransaction = new ConcurrentHashMap<>();
     private final Map<UUID, PendingSale> pendingSales = new ConcurrentHashMap<>();
     private final Map<UUID, PendingTrade> pendingTrades = new ConcurrentHashMap<>();
+    private final Map<UUID, Bounty> bounties = new ConcurrentHashMap<>();
+    private final ReentrantLock bountyStateLock = new ReentrantLock();
     private final Deque<Transaction> history = new ArrayDeque<>();
     private int transactionCooldownMs;
     private int confirmationSeconds;
     private double sellTax, buyTax;
+    private long minimumBounty, maximumBounty;
     private NamespacedKey sellChestOwnerKey;
     private final Map<String, ReentrantLock> sellChestLocks = new ConcurrentHashMap<>();
     private final Set<String> pendingAutomaticSellChests = ConcurrentHashMap.newKeySet();
@@ -80,7 +83,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -115,6 +118,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
         transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
         confirmationSeconds = Math.max(0, getConfig().getInt("settings.confirmation-seconds", 10));
+        minimumBounty = Math.max(1L, getConfig().getLong("settings.minimum-bounty", 100));
+        maximumBounty = Math.max(minimumBounty, getConfig().getLong("settings.maximum-bounty", 1000000));
         sellTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.sell-tax", 0.05)));
         buyTax = Math.max(0, Math.min(1, getConfig().getDouble("settings.buy-tax", 0.05)));
 
@@ -131,6 +136,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         shopPrices.clear();
         shopPrices.putAll(readConfigPrices("shop"));
         validateShopPrices();
+        loadBounties();
     }
 
     private Map<Material, BigDecimal> readConfigSellPrices(String sectionName) {
@@ -485,6 +491,26 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return true;
             }
 
+            case "bounty" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /bounty.");
+                    return true;
+                }
+                if (args.length == 0 || (args.length == 1 && args[0].equalsIgnoreCase("list"))) {
+                    listBounties(p);
+                    return true;
+                }
+                if (args.length != 2) {
+                    p.sendMessage("§cUsage: /bounty <player> <amount>");
+                    p.sendMessage("§7Use /bounty list to view active bounties.");
+                    return true;
+                }
+                long amount = parseMoneyAmount(p, args[1], minimumBounty, Math.min(maximumBounty, maxMoney));
+                if (amount < 1) return true;
+                postBounty(p, args[0], amount);
+                return true;
+            }
+
             case "sellto" -> {
                 if (!(sender instanceof Player p)) {
                     sender.sendMessage("Only players can use /sellto.");
@@ -724,6 +750,83 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         return true;
+    }
+
+    @EventHandler
+    public void onPlayerDeath(org.bukkit.event.entity.PlayerDeathEvent event) {
+        Player target = event.getEntity();
+        Player killer = target.getKiller();
+        if (killer == null || killer.getUniqueId().equals(target.getUniqueId())) return;
+
+        String killerDiscord = linkedId(killer);
+        if (killerDiscord == null) return;
+
+        Bounty bounty;
+        bountyStateLock.lock();
+        try {
+            bounty = bounties.remove(target.getUniqueId());
+            if (bounty == null) return;
+            try {
+                saveBounties();
+            } catch (Exception e) {
+                bounties.put(target.getUniqueId(), bounty);
+                getLogger().severe("Could not save bounty claim for " + target.getName() + ": " + e.getMessage());
+                return;
+            }
+        } finally {
+            bountyStateLock.unlock();
+        }
+
+        ReentrantLock killerLock = locks.computeIfAbsent(killer.getUniqueId(), k -> new ReentrantLock());
+        if (!killerLock.tryLock()) {
+            bountyStateLock.lock();
+            try {
+                bounties.merge(target.getUniqueId(), bounty,
+                        (existing, ignored) -> new Bounty(existing.targetName(), existing.amount() + bounty.amount()));
+                saveBounties();
+            } catch (Exception e) {
+                getLogger().severe("Could not restore bounty after payout lock failure for " + target.getName() + ".");
+            } finally {
+                bountyStateLock.unlock();
+            }
+            killer.sendMessage("§cBounty payout delayed because you have another economy transaction processing.");
+            return;
+        }
+
+        final long payout = bounty.amount();
+        final String targetName = bounty.targetName();
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            HttpResult result = api("PATCH", userUrl(killerDiscord),
+                    "{\"bank\":" + payout + ",\"reason\":\"" +
+                            json("CoolWips SMP bounty claimed on " + targetName) + "\"}");
+
+            if (!success(result)) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    bountyStateLock.lock();
+                    try {
+                        bounties.merge(target.getUniqueId(), bounty,
+                                (existing, ignored) -> new Bounty(existing.targetName(), existing.amount() + bounty.amount()));
+                        try {
+                            saveBounties();
+                        } catch (Exception e) {
+                            getLogger().severe("Could not restore failed bounty payout for " + targetName + ": " + e.getMessage());
+                        }
+                    } finally {
+                        bountyStateLock.unlock();
+                    }
+                    killer.sendMessage("§cBounty payout failed (HTTP " + result.status + "). The bounty was restored.");
+                    killerLock.unlock();
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                killer.sendMessage("§6§lBOUNTY CLAIMED §e+$" + money(payout) + " §7for killing §f" + targetName + "§7.");
+                Bukkit.broadcastMessage("§6§lBOUNTY §f" + killer.getName() + " §7claimed a §a$" +
+                        money(payout) + " §7bounty on §f" + targetName + "§7.");
+                killerLock.unlock();
+            });
+        });
     }
 
     @EventHandler
@@ -1444,6 +1547,189 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
 
+    private void postBounty(Player poster, String targetName, long amount) {
+        Player target = Bukkit.getOnlinePlayers().stream()
+                .filter(p -> p.getName().equalsIgnoreCase(targetName))
+                .findFirst()
+                .orElse(null);
+
+        if (target == null) {
+            poster.sendMessage("§cThat player must be online to place a bounty.");
+            return;
+        }
+        if (target.getUniqueId().equals(poster.getUniqueId())) {
+            poster.sendMessage("§cYou cannot place a bounty on yourself.");
+            return;
+        }
+
+        if (!cooldownReady(poster)) return;
+
+        String posterDiscord = linkedId(poster);
+        if (posterDiscord == null) return;
+
+        ReentrantLock lock = locks.computeIfAbsent(poster.getUniqueId(), k -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            poster.sendMessage("§eYou already have a transaction processing. Please wait.");
+            return;
+        }
+
+        final UUID targetUuid = target.getUniqueId();
+        final String finalTargetName = target.getName();
+        final long finalAmount = amount;
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Long balance = bankBalance(posterDiscord);
+            if (balance == null) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        poster.sendMessage("§cBounty cancelled. I could not verify your balance."));
+                return;
+            }
+            if (balance < 0 || balance < finalAmount) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        poster.sendMessage("§cBounty cancelled. You do not have enough money; your balance cannot go below $0."));
+                return;
+            }
+
+            HttpResult debit = api("PATCH", userUrl(posterDiscord),
+                    "{\"bank\":" + (-finalAmount) + ",\"reason\":\"" +
+                            json("CoolWips SMP bounty placed on " + finalTargetName) + "\"}");
+
+            if (!success(debit)) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        poster.sendMessage("§cBounty cancelled. UnbelievaBoat HTTP " + debit.status + "."));
+                return;
+            }
+
+            Long remainingBalance = parseBank(debit.body);
+            if (remainingBalance == null || remainingBalance < 0) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    poster.sendMessage("§cBounty cancelled because your balance would go below $0. Reversing your payment...");
+                    reverseMoney(posterDiscord, finalAmount,
+                            "CoolWips SMP bounty negative-balance safeguard",
+                            poster, lock);
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                bountyStateLock.lock();
+                try {
+                    Bounty existing = bounties.get(targetUuid);
+                    long newTotal;
+                    try {
+                        newTotal = Math.addExact(existing == null ? 0L : existing.amount(), finalAmount);
+                    } catch (ArithmeticException e) {
+                        reverseMoney(posterDiscord, finalAmount, "CoolWips SMP bounty overflow reversal", poster, lock);
+                        poster.sendMessage("§cBounty cancelled because the target's bounty is too large.");
+                        return;
+                    }
+
+                    if (newTotal > maximumBounty) {
+                        reverseMoney(posterDiscord, finalAmount, "CoolWips SMP bounty limit reversal", poster, lock);
+                        poster.sendMessage("§cThat bounty would exceed the $" + money(maximumBounty) + " maximum.");
+                        return;
+                    }
+
+                    bounties.put(targetUuid, new Bounty(finalTargetName, newTotal));
+                    try {
+                        saveBounties();
+                    } catch (Exception e) {
+                        Bounty previous = existing;
+                        if (previous == null) bounties.remove(targetUuid);
+                        else bounties.put(targetUuid, previous);
+                        reverseMoney(posterDiscord, finalAmount, "CoolWips SMP bounty save failure reversal", poster, lock);
+                        poster.sendMessage("§cBounty cancelled because it could not be saved.");
+                        return;
+                    }
+
+                    poster.sendMessage("§aBounty of §f$" + money(finalAmount) + " §aplaced on §f" +
+                            finalTargetName + "§a. Total bounty: §e$" + money(newTotal) + "§a.");
+                    target.sendMessage("§cA §6$" + money(finalAmount) + " §cbounty was placed on you. Total bounty: §6$" +
+                            money(newTotal) + "§c.");
+                    Bukkit.broadcastMessage("§6§lBOUNTY §f" + poster.getName() + " §7placed a §a$" +
+                            money(finalAmount) + " §7bounty on §c" + finalTargetName +
+                            "§7. Total: §a$" + money(newTotal) + "§7.");
+                } finally {
+                    bountyStateLock.unlock();
+                    if (lock.isHeldByCurrentThread()) lock.unlock();
+                }
+            });
+        });
+    }
+
+    private void listBounties(Player p) {
+        List<Bounty> list;
+        bountyStateLock.lock();
+        try {
+            list = bounties.values().stream()
+                    .sorted(Comparator.comparingLong(Bounty::amount).reversed()
+                            .thenComparing(Bounty::targetName, String.CASE_INSENSITIVE_ORDER))
+                    .limit(15)
+                    .toList();
+        } finally {
+            bountyStateLock.unlock();
+        }
+
+        p.sendMessage("§6§lCoolWips Bounties");
+        if (list.isEmpty()) {
+            p.sendMessage("§7There are currently no active bounties.");
+            return;
+        }
+        for (Bounty bounty : list) {
+            p.sendMessage("§f" + bounty.targetName() + " §7- §a$" + money(bounty.amount()));
+        }
+    }
+
+    private void loadBounties() {
+        bountyStateLock.lock();
+        try {
+            bounties.clear();
+            var section = getConfig().getConfigurationSection("bounties");
+            if (section == null) return;
+
+            for (String key : section.getKeys(false)) {
+                try {
+                    UUID uuid = UUID.fromString(key);
+                    long amount = section.getLong(key + ".amount", 0L);
+                    String name = section.getString(key + ".target-name", "");
+                    if (amount > 0 && !name.isBlank() && amount <= maximumBounty) {
+                        bounties.put(uuid, new Bounty(name, amount));
+                    }
+                } catch (IllegalArgumentException ignored) {
+                    getLogger().warning("Ignoring invalid bounty UUID: " + key);
+                }
+            }
+        } finally {
+            bountyStateLock.unlock();
+        }
+    }
+
+    private void saveBounties() {
+        getConfig().set("bounties", null);
+        for (Map.Entry<UUID, Bounty> entry : bounties.entrySet()) {
+            getConfig().set("bounties." + entry.getKey() + ".target-name", entry.getValue().targetName());
+            getConfig().set("bounties." + entry.getKey() + ".amount", entry.getValue().amount());
+        }
+        saveConfig();
+    }
+
+    private long parseMoneyAmount(Player p, String text, long min, long max) {
+        try {
+            long amount = Long.parseLong(text);
+            if (amount < min || amount > max) {
+                p.sendMessage("§cAmount must be between $" + money(min) + " and $" + money(max) + ".");
+                return -1;
+            }
+            return amount;
+        } catch (NumberFormatException e) {
+            p.sendMessage("§cAmount must be a whole number.");
+            return -1;
+        }
+    }
+
     private void payConfirm(Player seller) {
         PendingTrade trade = pendingTrades.values().stream()
                 .filter(t -> t.sellerUuid().equals(seller.getUniqueId()))
@@ -1984,6 +2270,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private record PendingSale(String material, int amount, long payout, long expiresAt) {}
+    private record Bounty(String targetName, long amount) {}
     private record PendingTrade(UUID buyerUuid, UUID sellerUuid, String sellerName, String material, int amount,
                                 long total, long expiresAt) {}
     private record Transaction(UUID uuid, String player, String material, int amount, long money,
@@ -2229,6 +2516,18 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             String query = args[1].toUpperCase(Locale.ROOT);
             return prices.keySet().stream().map(Enum::name)
                     .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
+        }
+
+        if (name.equals("bounty") && args.length == 1) {
+            String query = args[0].toLowerCase(Locale.ROOT);
+            List<String> suggestions = new ArrayList<>(List.of("list"));
+            Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .filter(x -> x.toLowerCase(Locale.ROOT).startsWith(query))
+                    .sorted()
+                    .limit(48)
+                    .forEach(suggestions::add);
+            return suggestions;
         }
 
         if (name.equals("sellchest") && args.length == 1) {

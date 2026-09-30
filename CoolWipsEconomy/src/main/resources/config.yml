@@ -13,6 +13,8 @@ settings:
   prices-per-page: 15
   transaction-cooldown-ms: 1500
   confirmation-seconds: 10
+  minimum-bounty: 100
+  maximum-bounty: 1000000
   sell-tax: 0.05
   buy-tax: 0.05
 prices:

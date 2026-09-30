@@ -35,6 +35,11 @@ commands:
     description: Buy an item directly from another player.
     usage: /buyfrom <player> <item> [amount]
     permission: coolwipseconomy.use
+  bounty:
+    description: Place and claim player bounties.
+    usage: /bounty <player> <amount>
+    aliases: [bounties]
+    permission: coolwipseconomy.use
   sellchest:
     description: Automatically sell priced items placed in a sell chest when it is closed.
     usage: /sellchest <create|remove|status>
