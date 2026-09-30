@@ -1682,9 +1682,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         try {
             // Remove the items before issuing the money credit. The sale has a complete
             // rollback path, so failures before a confirmed payout return the items.
-            removed = takeItems(p, finalMaterial, finalAmount);
-            if (removed.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
-                restoreItems(p, removed);
+            List<ItemStack> takenItems = takeItems(p, finalMaterial, finalAmount);
+            removed.addAll(takenItems);
+            if (takenItems.stream().mapToInt(ItemStack::getAmount).sum() != finalAmount) {
+                restoreItems(p, takenItems);
                 lock.unlock();
                 p.sendMessage("§cSale cancelled because the item transfer could not be completed.");
                 return;
