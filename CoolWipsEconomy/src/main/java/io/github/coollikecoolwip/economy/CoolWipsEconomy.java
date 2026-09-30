@@ -1425,11 +1425,18 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     lock.unlock();
                     return;
                 }
+                String chestSellerName = Bukkit.getOfflinePlayer(info.owner()).getName();
                 for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
                     MarketSale sale = marketSales.get(entry.getKey());
                     long itemPayout = afterTax(sale.gross(), sellTax);
-                    record(new Transaction(info.owner(), Bukkit.getOfflinePlayer(info.owner()).getName(),
+                    record(new Transaction(info.owner(), chestSellerName,
                             entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
+                    getLogger().info("SELL_CHEST | seller=" + chestSellerName
+                            + " | item=" + entry.getKey().name()
+                            + " | amount=" + entry.getValue()
+                            + " | gross=$" + sale.gross().stripTrailingZeros().toPlainString()
+                            + " | payout_after_tax=$" + money(itemPayout)
+                            + " | chest=" + info.key());
                 }
                 automaticSellChestCooldowns.put(info.key(), System.currentTimeMillis());
                 Player online = Bukkit.getPlayer(info.owner());
@@ -1781,6 +1788,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                         record(new Transaction(p.getUniqueId(), p.getName(), finalMaterial.name(),
                                 finalAmount, finalMoney, false, new java.util.Date().toString()));
+                        getLogger().info("SALE | seller=" + p.getName()
+                                + " | item=" + finalMaterial.name()
+                                + " | amount=" + finalAmount
+                                + " | gross=$" + finalMarketSale.gross().stripTrailingZeros().toPlainString()
+                                + " | payout_after_tax=$" + money(finalMoney));
                         if (p.isOnline()) {
                             p.sendMessage("§aSold §f" + finalAmount + "x " + pretty(finalMaterial)
                                     + " §afor §a$" + money(finalMoney) + "§a.");
@@ -2387,6 +2399,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                                 trade.amount(), total, true, new java.util.Date().toString()));
                         record(new Transaction(seller.getUniqueId(), seller.getName(), material.name(),
                                 trade.amount(), total, false, new java.util.Date().toString()));
+                        getLogger().info("PLAYER_SALE | seller=" + seller.getName()
+                                + " | buyer=" + buyer.getName()
+                                + " | item=" + material.name()
+                                + " | amount=" + trade.amount()
+                                + " | payout=$" + money(total));
                         buyer.sendMessage("§aTrade complete: §f" + trade.amount() + "x "
                                 + pretty(material) + " §afor §c$" + money(total) + "§a.");
                         seller.sendMessage("§aTrade complete: §f" + trade.amount() + "x "
