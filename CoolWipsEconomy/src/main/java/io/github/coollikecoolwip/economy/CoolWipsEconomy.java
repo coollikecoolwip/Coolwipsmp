@@ -217,13 +217,43 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketUnitPrice(Material material, long sold) {
         BigDecimal base = prices.get(material);
         if (base == null || !isFarmIncomeMaterial(material)) return base;
-        if (sold <= marketFreeUnits || marketStepUnits <= 0 || marketDropPercent.signum() <= 0) return base;
+        if (sold < marketFreeUnits || marketStepUnits <= 0 || marketDropPercent.signum() <= 0) return base;
 
         long steps = 1L + (sold - marketFreeUnits) / marketStepUnits;
         BigDecimal multiplier = BigDecimal.ONE.subtract(marketDropPercent)
                 .pow((int) Math.min(steps, 1000L));
         if (multiplier.compareTo(marketMinMultiplier) < 0) multiplier = marketMinMultiplier;
         return base.multiply(multiplier);
+    }
+
+    private BigDecimal marketGrossForSale(Material material, long sold, int amount) {
+        BigDecimal base = prices.get(material);
+        if (base == null || amount <= 0) return BigDecimal.ZERO;
+        if (!isFarmIncomeMaterial(material)) {
+            return base.multiply(BigDecimal.valueOf(amount));
+        }
+
+        long remaining = amount;
+        long cursor = sold;
+        BigDecimal gross = BigDecimal.ZERO;
+
+        while (remaining > 0) {
+            BigDecimal unit = marketUnitPrice(material, cursor);
+            long nextBoundary;
+            if (cursor < marketFreeUnits) {
+                nextBoundary = marketFreeUnits;
+            } else {
+                long stepIndex = (cursor - marketFreeUnits) / marketStepUnits;
+                nextBoundary = marketFreeUnits + Math.multiplyExact(stepIndex + 1L, marketStepUnits);
+            }
+
+            long chunk = Math.min(remaining, Math.max(1L, nextBoundary - cursor));
+            gross = gross.add(unit.multiply(BigDecimal.valueOf(chunk)));
+            cursor += chunk;
+            remaining -= chunk;
+        }
+
+        return gross;
     }
 
     private BigDecimal currentSellPrice(Material material) {
@@ -250,7 +280,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         try {
             refreshMarketDayLocked();
             long sold = marketSoldToday.getOrDefault(material, 0L);
-            BigDecimal unit = marketUnitPrice(material, sold);
+            BigDecimal gross = marketGrossForSale(material, sold, amount);
+            BigDecimal averageUnit = gross.divide(BigDecimal.valueOf(amount), 12, RoundingMode.HALF_UP);
             long newSold;
             try {
                 newSold = Math.addExact(sold, amount);
@@ -259,8 +290,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             }
             marketSoldToday.put(material, newSold);
             saveMarketLedgerLocked();
-            return new MarketSale(material, amount, unit,
-                    unit.multiply(BigDecimal.valueOf(amount)), true);
+            return new MarketSale(material, amount, averageUnit, gross, true);
         } finally {
             marketLock.unlock();
         }
@@ -281,7 +311,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 boolean tracked = isFarmIncomeMaterial(material);
                 long sold = marketSoldToday.getOrDefault(material, 0L);
-                BigDecimal unit = tracked ? marketUnitPrice(material, sold) : base;
+                BigDecimal gross = tracked ? marketGrossForSale(material, sold, amount)
+                        : base.multiply(BigDecimal.valueOf(amount));
+                BigDecimal averageUnit = gross.divide(BigDecimal.valueOf(amount), 12, RoundingMode.HALF_UP);
                 if (tracked) {
                     try {
                         newTotals.put(material, Math.addExact(sold, amount));
@@ -289,8 +321,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         return Collections.emptyMap();
                     }
                 }
-                result.put(material, new MarketSale(material, amount, unit,
-                        unit.multiply(BigDecimal.valueOf(amount)), tracked));
+                result.put(material, new MarketSale(material, amount, averageUnit, gross, tracked));
             }
 
             for (Map.Entry<Material, Long> entry : newTotals.entrySet()) {
