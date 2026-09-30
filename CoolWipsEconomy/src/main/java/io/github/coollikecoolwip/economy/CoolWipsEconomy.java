@@ -127,6 +127,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     );
 
     private final Map<Material, Long> marketSoldToday = new ConcurrentHashMap<>();
+    // High-water mark prevents a failed/rolled-back reservation from ever making
+    // a day's market price rise again.
+    private final Map<Material, Long> marketPeakSoldToday = new ConcurrentHashMap<>();
     private final ReentrantLock marketLock = new ReentrantLock();
     private File marketFile;
     private YamlConfiguration marketData;
@@ -312,7 +315,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             if (!marketDay.equals(marketData.getString("day", ""))) {
                 marketSoldToday.clear();
+                marketPeakSoldToday.clear();
                 marketData.set("sold", null);
+                marketData.set("peak_sold", null);
                 marketData.set("day", marketDay);
                 saveMarketLedgerLocked();
                 return;
@@ -329,6 +334,22 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         getLogger().warning("Ignoring invalid market ledger entry: " + key);
                     }
                 }
+            }
+
+            var peakSection = marketData.getConfigurationSection("peak_sold");
+            if (peakSection != null) {
+                for (String key : peakSection.getKeys(false)) {
+                    try {
+                        Material material = Material.matchMaterial(key);
+                        long peak = Long.parseLong(marketData.getString("peak_sold." + key, "0"));
+                        if (material != null && peak > 0) marketPeakSoldToday.put(material, peak);
+                    } catch (Exception ignored) {
+                        getLogger().warning("Ignoring invalid market peak entry: " + key);
+                    }
+                }
+            }
+            for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
+                marketPeakSoldToday.merge(entry.getKey(), entry.getValue(), Math::max);
             }
         } finally {
             marketLock.unlock();
@@ -348,8 +369,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (marketFile == null || marketData == null) return;
         marketData.set("day", marketDay);
         marketData.set("sold", null);
+        marketData.set("peak_sold", null);
         for (Map.Entry<Material, Long> entry : marketSoldToday.entrySet()) {
             marketData.set("sold." + entry.getKey().name(), entry.getValue());
+        }
+        for (Map.Entry<Material, Long> entry : marketPeakSoldToday.entrySet()) {
+            marketData.set("peak_sold." + entry.getKey().name(), entry.getValue());
         }
         try {
             marketData.save(marketFile);
@@ -363,6 +388,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (today.equals(marketDay)) return;
         marketDay = today;
         marketSoldToday.clear();
+        marketPeakSoldToday.clear();
         saveMarketLedgerLocked();
     }
 
@@ -425,7 +451,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         marketLock.lock();
         try {
             refreshMarketDayLocked();
-            return marketUnitPrice(material, marketSoldToday.getOrDefault(material, 0L));
+            long sold = Math.max(
+                    marketSoldToday.getOrDefault(material, 0L),
+                    marketPeakSoldToday.getOrDefault(material, 0L));
+            return marketUnitPrice(material, sold);
         } finally {
             marketLock.unlock();
         }
@@ -441,9 +470,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         try {
             refreshMarketDayLocked();
             long sold = marketSoldToday.getOrDefault(material, 0L);
-            BigDecimal gross = marketGrossForSale(material, sold, amount);
+            long pricingSold = Math.max(sold, marketPeakSoldToday.getOrDefault(material, 0L));
+            BigDecimal gross = marketGrossForSale(material, pricingSold, amount);
             long newSold = Math.addExact(sold, amount);
             marketSoldToday.put(material, newSold);
+            marketPeakSoldToday.merge(material, newSold, Math::max);
             saveMarketLedgerLocked();
             return new MarketSale(material, amount, gross, true);
         } catch (ArithmeticException e) {
@@ -470,8 +501,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 boolean tracked = isFarmIncomeMaterial(material);
                 long sold = marketSoldToday.getOrDefault(material, 0L);
+                long pricingSold = Math.max(sold, marketPeakSoldToday.getOrDefault(material, 0L));
                 BigDecimal gross = tracked
-                        ? marketGrossForSale(material, sold, amount)
+                        ? marketGrossForSale(material, pricingSold, amount)
                         : base.multiply(BigDecimal.valueOf(amount));
                 if (tracked) newTotals.put(material, Math.addExact(sold, amount));
                 result.put(material, new MarketSale(material, amount, gross, tracked));
@@ -480,6 +512,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (result.size() != amounts.size()) return Collections.emptyMap();
             for (Map.Entry<Material, Long> entry : newTotals.entrySet()) {
                 marketSoldToday.put(entry.getKey(), entry.getValue());
+                marketPeakSoldToday.merge(entry.getKey(), entry.getValue(), Math::max);
             }
             if (!newTotals.isEmpty()) saveMarketLedgerLocked();
             return result;
