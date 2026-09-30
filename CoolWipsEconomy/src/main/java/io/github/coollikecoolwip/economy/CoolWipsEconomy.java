@@ -112,7 +112,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Material.NAUTILUS_SHELL, Material.SHULKER_SHELL, Material.WITHER_SKELETON_SKULL, Material.DRAGON_BREATH,
             Material.HONEYCOMB, Material.HONEY_BOTTLE, Material.HONEY_BLOCK,
             Material.HONEYCOMB_BLOCK,
-            Material.MOSS_BLOCK, Material.MOSS_CARPET, Material.AZALEA, Material.FLOWERING_AZALEA,
+            Material.MOSS_BLOCK, Material.MOSS_CARPET, Material.PALE_MOSS_BLOCK, Material.AZALEA, Material.FLOWERING_AZALEA,
             Material.AZALEA_LEAVES, Material.FLOWERING_AZALEA_LEAVES, Material.PINK_PETALS,
             Material.WILDFLOWERS, Material.LEAF_LITTER, Material.BUSH, Material.FIREFLY_BUSH,
             Material.SHORT_DRY_GRASS, Material.TALL_DRY_GRASS, Material.SHORT_GRASS, Material.TALL_GRASS,
