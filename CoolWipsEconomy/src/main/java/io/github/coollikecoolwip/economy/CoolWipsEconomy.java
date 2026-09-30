@@ -80,7 +80,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Material.BAMBOO_BLOCK, Material.CACTUS, Material.COCOA_BEANS, Material.NETHER_WART,
             Material.SWEET_BERRIES, Material.GLOW_BERRIES, Material.CHORUS_FRUIT, Material.CHORUS_FLOWER,
             Material.KELP, Material.DRIED_KELP, Material.DRIED_KELP_BLOCK, Material.APPLE, Material.BREAD,
-            Material.COOKIE, Material.CAKE, Material.BAKED_POTATO,
+            Material.COOKIE, Material.CAKE, Material.BAKED_POTATO, Material.PAPER, Material.BOOK,
+            Material.BOOKSHELF, Material.CHEST, Material.BARREL, Material.STICK, Material.HAY_BLOCK,
+            Material.BONE_BLOCK, Material.NETHER_WART_BLOCK, Material.SLIME_BLOCK,
+            Material.TNT, Material.FIREWORK_ROCKET, Material.FIREWORK_STAR,
             Material.BEEF, Material.PORKCHOP, Material.CHICKEN, Material.MUTTON, Material.RABBIT,
             Material.COD, Material.SALMON, Material.PUFFERFISH, Material.TROPICAL_FISH,
             Material.COOKED_BEEF, Material.COOKED_PORKCHOP, Material.COOKED_CHICKEN, Material.COOKED_MUTTON,
@@ -340,7 +343,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         for (String prefix : FARM_WOOD_PREFIXES) {
             if (name.startsWith(prefix + "_") || name.equals(prefix)) return true;
         }
-        return name.contains("WOOL") || name.endsWith("_CARPET");
+        return name.contains("WOOL") || name.endsWith("_CARPET") || name.endsWith("_BED");
     }
 
     private BigDecimal remainingFarmIncome(UUID uuid) {
