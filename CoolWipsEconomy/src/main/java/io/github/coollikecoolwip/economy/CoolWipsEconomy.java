@@ -24,7 +24,10 @@ import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.ShapelessRecipe;
 import org.bukkit.inventory.CookingRecipe;
 import org.bukkit.inventory.RecipeChoice;
+import org.bukkit.inventory.SmithingRecipe;
+import org.bukkit.inventory.SmithingTransformRecipe;
 import org.bukkit.inventory.StonecuttingRecipe;
+import org.bukkit.inventory.TransmuteRecipe;
 import org.bukkit.inventory.EquipmentSlot;
 import org.bukkit.plugin.java.JavaPlugin;
 import org.bukkit.persistence.PersistentDataType;
@@ -1150,6 +1153,31 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     BigDecimal value = minimumRecipeChoiceSellValue(cooking.getInputChoice());
                     if (value == null) allPriced = false;
                     else inputValue = inputValue.add(value);
+                } else if (recipe instanceof SmithingTransformRecipe smithing) {
+                    BigDecimal template = minimumRecipeChoiceSellValue(smithing.getTemplate());
+                    BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
+                    BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
+                    if (template == null || base == null || addition == null) {
+                        allPriced = false;
+                    } else {
+                        inputValue = inputValue.add(template).add(base).add(addition);
+                    }
+                } else if (recipe instanceof SmithingRecipe smithing) {
+                    BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
+                    BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
+                    if (base == null || addition == null) {
+                        allPriced = false;
+                    } else {
+                        inputValue = inputValue.add(base).add(addition);
+                    }
+                } else if (recipe instanceof TransmuteRecipe transmute) {
+                    BigDecimal input = minimumRecipeChoiceSellValue(transmute.getInput());
+                    BigDecimal material = minimumRecipeChoiceSellValue(transmute.getMaterial());
+                    if (input == null || material == null) {
+                        allPriced = false;
+                    } else {
+                        inputValue = inputValue.add(input).add(material);
+                    }
                 } else {
                     continue;
                 }
@@ -3690,8 +3718,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private long afterTax(BigDecimal gross, double tax) {
+        if (gross == null || gross.signum() <= 0) return 0L;
         BigDecimal multiplier = BigDecimal.ONE.subtract(BigDecimal.valueOf(tax));
-        return Math.max(0, gross.multiply(multiplier).setScale(0, RoundingMode.HALF_UP).longValue());
+        try {
+            return Math.max(0, gross.multiply(multiplier)
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValueExact());
+        } catch (ArithmeticException e) {
+            getLogger().severe("Rejected economy payout because it overflowed the long range.");
+            return 0L;
+        }
     }
 
     private boolean cooldownReady(Player p) {
