@@ -9,7 +9,8 @@ COD_BUCKET=31
 SALMON_BUCKET=31
 PUFFERFISH_BUCKET=33
 TROPICAL_FISH_BUCKET=32
-AXOLOTL_BUCKET=36
+AXOLOTL=200
+AXOLOTL_BUCKET=250
 TADPOLE_BUCKET=31
 
 # Purely renewable/AFK farm outputs are intentionally low so they are not dominant money makers.
