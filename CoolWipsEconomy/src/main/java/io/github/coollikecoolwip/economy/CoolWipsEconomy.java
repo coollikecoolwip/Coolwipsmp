@@ -1713,26 +1713,43 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             final MarketSale finalMarketSale = marketSale;
             Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                BankMutationResult mutation;
+                Long before;
                 try {
-                    Long before = bankBalance(discordId);
-                    if (before == null) {
-                        Bukkit.getScheduler().runTask(this, () -> {
-                            failSellTransaction(p, returnLocation, removed, finalMarketSale);
-                            if (lock.isHeldByCurrentThread()) lock.unlock();
-                            if (p.isOnline()) p.sendMessage("§cSale cancelled. Your balance could not be verified.");
-                        });
-                        return;
-                    }
-
-                    mutation = changeBank(discordId, finalMoney, reason, before);
+                    before = bankBalance(discordId);
                 } catch (RuntimeException e) {
                     getLogger().log(java.util.logging.Level.SEVERE,
-                            "Unexpected exception while processing a sale for " + p.getName() + ".", e);
+                            "Unexpected exception while checking the balance for " + p.getName() + ".", e);
                     Bukkit.getScheduler().runTask(this, () -> {
                         failSellTransaction(p, returnLocation, removed, finalMarketSale);
                         if (lock.isHeldByCurrentThread()) lock.unlock();
-                        if (p.isOnline()) p.sendMessage("§cSale cancelled because an internal error occurred. Your items were returned.");
+                        if (p.isOnline()) p.sendMessage("§cSale cancelled because the balance could not be checked. Your items were returned.");
+                    });
+                    return;
+                }
+
+                if (before == null) {
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        failSellTransaction(p, returnLocation, removed, finalMarketSale);
+                        if (lock.isHeldByCurrentThread()) lock.unlock();
+                        if (p.isOnline()) p.sendMessage("§cSale cancelled. Your balance could not be verified.");
+                    });
+                    return;
+                }
+
+                BankMutationResult mutation;
+                try {
+                    mutation = changeBank(discordId, finalMoney, reason, before);
+                } catch (RuntimeException e) {
+                    // The money request may have reached UnbelievaBoat before the exception.
+                    // Treat this as UNKNOWN and never restore the items automatically.
+                    getLogger().log(java.util.logging.Level.SEVERE,
+                            "Unexpected exception while applying a sale payout for " + p.getName()
+                                    + ". Treating payout state as UNKNOWN.", e);
+                    Bukkit.getScheduler().runTask(this, () -> {
+                        if (lock.isHeldByCurrentThread()) lock.unlock();
+                        if (p.isOnline()) {
+                            p.sendMessage("§cSale could not be verified. Do not retry; contact staff.");
+                        }
                     });
                     return;
                 }
