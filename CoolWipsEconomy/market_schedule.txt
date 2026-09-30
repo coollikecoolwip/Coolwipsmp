@@ -1,5 +1,6 @@
 # CoolWips Economy complete market schedule
 # Every item in prices.txt is listed. DYNAMIC entries exactly match the plugin's farm-income test.
+# BASE_SELL is the configured price; the startup crafting guard may lower it further to prevent craft-to-sell profit.
 # MATERIAL | BASE_SELL | MARKET | FULL_PRICE_SALES | STEP_SALES | DROP_PER_STEP | FLOOR
 ACACIA_DOOR | $1.4 | DYNAMIC:MEDIUM | 1312 | 328 | -65% | $0.017
 ACACIA_FENCE | $1.2 | DYNAMIC:MEDIUM | 1504 | 376 | -65% | $0.017
