@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.coollikecoolwip</groupId>
   <artifactId>coolwips-economy</artifactId>
-  <version>1.1.21</version>
+  <version>1.1.22</version>
   <name>CoolWips Economy</name>
   <properties><maven.compiler.release>25</maven.compiler.release><project.build.sourceEncoding>UTF-8</project.build.sourceEncoding></properties>
   <repositories>
@@ -16,7 +16,7 @@
     <dependency><groupId>com.discordsrv</groupId><artifactId>discordsrv</artifactId><version>1.30.5</version><scope>provided</scope></dependency>
   </dependencies>
   <build>
-    <finalName>CoolWipsEconomy-1.1.21</finalName>
+    <finalName>CoolWipsEconomy-1.1.22</finalName>
     <plugins><plugin><groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version><configuration><release>25</release></configuration></plugin></plugins>
   </build>
 </project>
