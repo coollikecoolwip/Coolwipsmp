@@ -4195,7 +4195,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         if (name.equals("cweconomy") && args.length == 1) {
-            return List.of("reload", "status", "stats", "audit", "market", "resetmarket", "maintenance");
+            return List.of("reload", "status", "stats", "audit", "market", "resetmarket", "maintenance", "block", "unblock");
+        }
+
+        if (name.equals("cweconomy") && args.length == 2
+                && (args[0].equalsIgnoreCase("block") || args[0].equalsIgnoreCase("unblock"))) {
+            return prices.keySet().stream().map(Enum::name).sorted().limit(100).toList();
         }
 
         if (name.equals("cweconomy") && args.length == 2
