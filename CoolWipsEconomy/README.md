@@ -10,7 +10,7 @@ Requirements:
 
 Install:
 1. Build with build.bat.
-2. Put the built `target/CoolWipsEconomy-1.1.20.jar` in `plugins/`.
+2. Put the built `target/CoolWipsEconomy-1.3.2.jar` in `plugins/`.
 3. Start the server once.
 4. Open plugins/CoolWipsEconomy/config.yml.
 5. Put your UnbelievaBoat API token in api-token.
@@ -33,6 +33,8 @@ Commands:
 - /cweconomy audit
 - /cweconomy market <player> [item] (operator)
 - /cweconomy resetmarket <player> [item] (operator)
+- /cweconomy maintenance on|off|block <item>|unblock <item>|status (operator)
+- `/cweco block` and `/cweco unblock` are shortcuts for blocking/unblocking all selling; `/cweco block <item>` and `/cweco unblock <item>` control one item.
 
 Players must already be linked through DiscordSRV. The plugin uses the linked Discord ID for UnbelievaBoat.
 
@@ -40,7 +42,7 @@ Important: never commit a real API token to a public GitHub repository.
 
 Sales and purchases are serialized per player. The configured buy tax is applied to shop purchases. Player trades preserve the full ItemStack metadata. Items are removed only after UnbelievaBoat confirms payment. If the items disappear before removal, the plugin attempts to reverse the payment.
 
-Edit prices.txt in this folder on GitHub, then run /cweconomy reload.
+Edit `prices.txt` and `shop.txt` in this folder on GitHub, then run `/cweconomy reload`. The legacy `prices/` YAML folder is no longer used and has been removed.
 
 Sell chests: use `/sellchest create` while looking at a chest. Put items with a sell price inside, then close the chest. The priced items are automatically sold for the normal `/sell` price after tax; items without a sell price stay in the chest. Only the owner can open or break the sell chest (operators can manage it).
 
