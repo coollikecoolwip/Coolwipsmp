@@ -1954,6 +1954,22 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return true;
                 }
 
+                // Short maintenance alias: /cweco block|unblock [item].
+                // With no item, block/unblock controls all selling.
+                if (args[0].equalsIgnoreCase("block") || args[0].equalsIgnoreCase("unblock")) {
+                    String action = args[0].toLowerCase(Locale.ROOT);
+                    if (args.length == 1) {
+                        maintenance(sender, new String[]{"maintenance", action.equals("block") ? "on" : "off"});
+                    } else {
+                        String[] maintenanceArgs = new String[args.length + 1];
+                        maintenanceArgs[0] = "maintenance";
+                        maintenanceArgs[1] = action;
+                        System.arraycopy(args, 1, maintenanceArgs, 2, args.length - 1);
+                        maintenance(sender, maintenanceArgs);
+                    }
+                    return true;
+                }
+
                 if (args[0].equalsIgnoreCase("market")) {
                     marketAdmin(sender, args, false);
                     return true;
