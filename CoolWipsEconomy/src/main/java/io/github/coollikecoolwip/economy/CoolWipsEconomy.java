@@ -213,6 +213,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadRemoteShop();
         loadRemoteMarketRules();
         startNonNegativeBalanceGuard();
+        Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::cleanupExpiredPendingState, 600L, 600L);
     }
 
     @Override public void onDisable() {
@@ -2133,7 +2134,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Inventory inventory = event.getInventory();
         if (!isChestInventory(inventory)) return;
         if (getSellChestInfo(inventory) == null) return;
-        Bukkit.getScheduler().runTask(this, () -> scheduleAutomaticSellChest(inventory));
+        scheduleAutomaticSellChest(inventory);
     }
 
     @EventHandler
@@ -2141,7 +2142,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Inventory inventory = event.getInventory();
         if (!isChestInventory(inventory)) return;
         if (getSellChestInfo(inventory) == null) return;
-        Bukkit.getScheduler().runTask(this, () -> scheduleAutomaticSellChest(inventory));
+        scheduleAutomaticSellChest(inventory);
     }
 
     @EventHandler
@@ -2240,10 +2241,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         Map<Material, Integer> amounts = new LinkedHashMap<>();
         int totalItems = 0;
+        ItemStack[] contents = inventory.getContents();
 
         // Sell up to the same per-transaction item limit used by /sell and /sellall.
         // Do not reject the entire chest just because it contains more than maxItems.
-        for (ItemStack stack : inventory.getContents()) {
+        for (ItemStack stack : contents) {
             if (stack == null || stack.getType().isAir()) continue;
             BigDecimal unit = prices.get(stack.getType());
             if (unit == null || maintenanceBlocks.contains(stack.getType())) continue;
@@ -2266,7 +2268,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         // Remove only the items actually included in this batch.
         List<ItemStack> removed = new ArrayList<>();
         Map<Material, Integer> remainingToRemove = new HashMap<>(amounts);
-        ItemStack[] contents = inventory.getContents();
 
         for (int i = 0; i < contents.length; i++) {
             ItemStack stack = contents[i];
@@ -3880,6 +3881,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private String money(long value) {
         return String.format(Locale.US, "%,d", value);
+    }
+
+    private void cleanupExpiredPendingState() {
+        long now = System.currentTimeMillis();
+        pendingSales.entrySet().removeIf(entry -> entry.getValue().expiresAt() < now);
+        pendingTrades.entrySet().removeIf(entry -> entry.getValue().expiresAt() < now);
     }
 
     private void record(Transaction transaction) {
