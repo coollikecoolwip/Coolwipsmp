@@ -1707,10 +1707,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
-                if (controlsSellReadiness) {
-                    pricesReady.set(false);
-                    getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
-                }
             }
         });
     }
@@ -1789,6 +1785,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination, boolean controlsSellReadiness) {
         if (fileUrl.isBlank()) {
             getLogger().warning("Remote " + label + " URL is blank.");
+            if (controlsSellReadiness) {
+                pricesReady.set(false);
+                getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
+            }
             return;
         }
 
@@ -1826,13 +1826,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
 
-                destination.clear();
-                destination.putAll(loaded);
-                if (controlsSellReadiness) {
-                    pricesReady.set(true);
-                    getLogger().info("prices.txt loaded successfully. Selling enabled with " + loaded.size() + " prices.");
-                }
                 Bukkit.getScheduler().runTask(this, () -> {
+                    destination.clear();
+                    destination.putAll(loaded);
+                    if (controlsSellReadiness) {
+                        pricesReady.set(true);
+                        getLogger().info("prices.txt loaded successfully. Selling enabled with " + loaded.size() + " prices.");
+                    }
                     validateCraftingEconomy();
                     validateShopPrices();
                     getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
@@ -1840,6 +1840,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                if (controlsSellReadiness) {
+                    pricesReady.set(false);
+                    getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
+                }
             }
         });
     }
