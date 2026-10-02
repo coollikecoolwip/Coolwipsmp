@@ -1389,25 +1389,48 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private int validateCraftingEconomy() {
         if (prices.isEmpty()) return 0;
 
-        // prices.txt is authoritative. This check is diagnostic only and must
-        // never rewrite live sell prices. A crafted item's price may intentionally
-        // be higher than its input cost (for example DIAMOND_BLOCK and EMERALD_BLOCK).
-        int violations = 0;
-        Iterator<Recipe> iterator = Bukkit.recipeIterator();
+        /*
+         * Prices are balanced once when prices.txt is loaded. The old crafting
+         * guard spammed the console and repeatedly reported prices that were
+         * intentionally above recipe input cost. We now silently lower any
+         * sell price that could create a crafting profit.
+         *
+         * A crafted result is capped at 95% of its input value per output item.
+         * With the normal 5% sell tax, the maximum payout is therefore below
+         * the value of the ingredients used to craft it.
+         */
+        int adjustments = 0;
 
-        while (iterator.hasNext()) {
-            Recipe recipe = iterator.next();
-            ItemStack result = recipe.getResult();
-            if (result == null || result.getType().isAir() || result.getAmount() <= 0) continue;
+        for (int pass = 0; pass < 8; pass++) {
+            int passAdjustments = 0;
+            Iterator<Recipe> iterator = Bukkit.recipeIterator();
 
-            BigDecimal inputValue = BigDecimal.ZERO;
-            boolean allPriced = true;
+            while (iterator.hasNext()) {
+                Recipe recipe = iterator.next();
+                ItemStack result = recipe.getResult();
+                if (result == null || result.getType().isAir() || result.getAmount() <= 0) continue;
 
-            if (recipe instanceof ShapedRecipe shaped) {
-                Map<Character, ItemStack> ingredientMap = shaped.getIngredientMap();
-                for (String row : shaped.getShape()) {
-                    for (int i = 0; i < row.length(); i++) {
-                        ItemStack ingredient = ingredientMap.get(row.charAt(i));
+                BigDecimal inputValue = BigDecimal.ZERO;
+                boolean allPriced = true;
+
+                if (recipe instanceof ShapedRecipe shaped) {
+                    Map<Character, ItemStack> ingredientMap = shaped.getIngredientMap();
+                    for (String row : shaped.getShape()) {
+                        for (int i = 0; i < row.length(); i++) {
+                            ItemStack ingredient = ingredientMap.get(row.charAt(i));
+                            if (ingredient == null || ingredient.getType().isAir()) continue;
+                            BigDecimal value = prices.get(ingredient.getType());
+                            if (value == null) {
+                                allPriced = false;
+                                break;
+                            }
+                            inputValue = inputValue.add(value.multiply(
+                                    BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
+                        }
+                        if (!allPriced) break;
+                    }
+                } else if (recipe instanceof ShapelessRecipe shapeless) {
+                    for (ItemStack ingredient : shapeless.getIngredientList()) {
                         if (ingredient == null || ingredient.getType().isAir()) continue;
                         BigDecimal value = prices.get(ingredient.getType());
                         if (value == null) {
@@ -1417,75 +1440,63 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         inputValue = inputValue.add(value.multiply(
                                 BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
                     }
-                    if (!allPriced) break;
-                }
-            } else if (recipe instanceof ShapelessRecipe shapeless) {
-                for (ItemStack ingredient : shapeless.getIngredientList()) {
-                    if (ingredient == null || ingredient.getType().isAir()) continue;
-                    BigDecimal value = prices.get(ingredient.getType());
-                    if (value == null) {
+                } else if (recipe instanceof StonecuttingRecipe stonecutting) {
+                    BigDecimal value = minimumRecipeChoiceSellValue(stonecutting.getInputChoice());
+                    if (value == null) allPriced = false;
+                    else inputValue = inputValue.add(value);
+                } else if (recipe instanceof CookingRecipe<?> cooking) {
+                    BigDecimal value = minimumRecipeChoiceSellValue(cooking.getInputChoice());
+                    if (value == null) allPriced = false;
+                    else inputValue = inputValue.add(value);
+                } else if (recipe instanceof SmithingTransformRecipe smithing) {
+                    BigDecimal template = minimumRecipeChoiceSellValue(smithing.getTemplate());
+                    BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
+                    BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
+                    if (template == null || base == null || addition == null) {
                         allPriced = false;
-                        break;
+                    } else {
+                        inputValue = inputValue.add(template).add(base).add(addition);
                     }
-                    inputValue = inputValue.add(value.multiply(
-                            BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
-                }
-            } else if (recipe instanceof StonecuttingRecipe stonecutting) {
-                BigDecimal value = minimumRecipeChoiceSellValue(stonecutting.getInputChoice());
-                if (value == null) allPriced = false;
-                else inputValue = inputValue.add(value);
-            } else if (recipe instanceof CookingRecipe<?> cooking) {
-                BigDecimal value = minimumRecipeChoiceSellValue(cooking.getInputChoice());
-                if (value == null) allPriced = false;
-                else inputValue = inputValue.add(value);
-            } else if (recipe instanceof SmithingTransformRecipe smithing) {
-                BigDecimal template = minimumRecipeChoiceSellValue(smithing.getTemplate());
-                BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
-                BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
-                if (template == null || base == null || addition == null) {
-                    allPriced = false;
+                } else if (recipe instanceof SmithingRecipe smithing) {
+                    BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
+                    BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
+                    if (base == null || addition == null) {
+                        allPriced = false;
+                    } else {
+                        inputValue = inputValue.add(base).add(addition);
+                    }
+                } else if (recipe instanceof TransmuteRecipe transmute) {
+                    BigDecimal input = minimumRecipeChoiceSellValue(transmute.getInput());
+                    BigDecimal material = minimumRecipeChoiceSellValue(transmute.getMaterial());
+                    if (input == null || material == null) {
+                        allPriced = false;
+                    } else {
+                        inputValue = inputValue.add(input).add(material);
+                    }
                 } else {
-                    inputValue = inputValue.add(template).add(base).add(addition);
+                    continue;
                 }
-            } else if (recipe instanceof SmithingRecipe smithing) {
-                BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
-                BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
-                if (base == null || addition == null) {
-                    allPriced = false;
-                } else {
-                    inputValue = inputValue.add(base).add(addition);
+
+                BigDecimal current = prices.get(result.getType());
+                if (!allPriced || current == null || inputValue.signum() <= 0) continue;
+
+                BigDecimal safe = inputValue
+                        .divide(BigDecimal.valueOf(result.getAmount()), 6, RoundingMode.DOWN)
+                        .multiply(new BigDecimal("0.95"))
+                        .setScale(6, RoundingMode.DOWN)
+                        .max(new BigDecimal("0.000001"));
+
+                if (current.compareTo(safe) > 0) {
+                    prices.put(result.getType(), safe);
+                    passAdjustments++;
                 }
-            } else if (recipe instanceof TransmuteRecipe transmute) {
-                BigDecimal input = minimumRecipeChoiceSellValue(transmute.getInput());
-                BigDecimal material = minimumRecipeChoiceSellValue(transmute.getMaterial());
-                if (input == null || material == null) {
-                    allPriced = false;
-                } else {
-                    inputValue = inputValue.add(input).add(material);
-                }
-            } else {
-                continue;
             }
 
-            BigDecimal current = prices.get(result.getType());
-            if (!allPriced || current == null || inputValue.signum() <= 0) continue;
-
-            BigDecimal safe = inputValue
-                    .divide(BigDecimal.valueOf(result.getAmount()), 6, RoundingMode.DOWN)
-                    .multiply(new BigDecimal("0.95"))
-                    .setScale(6, RoundingMode.DOWN)
-                    .max(new BigDecimal("0.000001"));
-
-            if (current.compareTo(safe) > 0) {
-                violations++;
-            }
+            adjustments += passAdjustments;
+            if (passAdjustments == 0) break;
         }
 
-        if (violations > 0) {
-            getLogger().info("Crafting price check found " + violations
-                    + " prices above their calculated input-cost guard; prices.txt values were left unchanged.");
-        }
-        return violations;
+        return adjustments;
     }
 
     private BigDecimal minimumRecipeChoiceSellValue(RecipeChoice choice) {
