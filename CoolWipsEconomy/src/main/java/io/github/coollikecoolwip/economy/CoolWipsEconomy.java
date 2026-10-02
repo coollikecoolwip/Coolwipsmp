@@ -1520,8 +1520,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void loadRemotePrices() {
-        loadRemoteSellFile(pricesUrl, "prices.txt", prices);
-    }
+        // Sell prices are always sourced from the external prices.txt file.\n        // The JAR contains no authoritative sell-price table; if the remote file\n        // cannot be loaded, keep the last successfully loaded values rather than\n        // silently falling back to bundled/default prices.\n        loadRemoteSellFile(pricesUrl, "prices.txt", prices);\n    }
 
     private void loadRemoteShop() {
         loadRemoteFile(shopUrl, "shop.txt", shopPrices);
