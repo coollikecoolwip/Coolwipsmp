@@ -2276,7 +2276,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     public void onSellChestInventoryClick(InventoryClickEvent event) {
         Inventory inventory = event.getInventory();
         if (!isChestInventory(inventory)) return;
-        if (getSellChestInfo(inventory) == null) return;
         scheduleAutomaticSellChest(inventory);
     }
 
@@ -2507,12 +2506,6 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     record(new Transaction(info.owner(), chestSellerName,
                             entry.getKey().name(), entry.getValue(), itemPayout, false, new java.util.Date().toString()));
                     recordEconomyCreated(info.owner(), chestSellerName, entry.getKey(), entry.getValue(), itemPayout, "SELL_CHEST");
-                    getLogger().info("SELL_CHEST | seller=" + chestSellerName
-                            + " | item=" + entry.getKey().name()
-                            + " | amount=" + entry.getValue()
-                            + " | gross=$" + sale.gross().stripTrailingZeros().toPlainString()
-                            + " | payout_after_tax=$" + money(itemPayout)
-                            + " | chest=" + info.key());
                 }
                 automaticSellChestCooldowns.put(info.key(), System.currentTimeMillis());
                 Player online = Bukkit.getPlayer(info.owner());
@@ -3738,7 +3731,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void startNonNegativeBalanceGuard() {
-        final long periodTicks = 20L * 10L;
+        // Run less frequently so the safeguard cannot become a recurring main-thread/API hot path.
+        final long periodTicks = 20L * 30L;
 
         Bukkit.getScheduler().runTaskTimer(this, () -> {
             Map<UUID, String> accounts = new HashMap<>();
