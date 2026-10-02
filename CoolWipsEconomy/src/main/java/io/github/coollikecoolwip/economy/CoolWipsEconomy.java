@@ -1189,7 +1189,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             sender.sendMessage("§7Crafting safeguards adjusted: §f" + adjustments + " sell prices");
             sender.sendMessage("§7Money created today: §a$" + money(economyStatsData.getLong("money_created", 0L)));
             sender.sendMessage("§7Money removed today: §c$" + money(economyStatsData.getLong("money_removed", 0L)));
-            sender.sendMessage("§7Anomaly flags today: §f" + (flags == null ? 0 : flags.getKeys(false).size()));\n            sender.sendMessage("§7Sell prices loaded: §f" + prices.size() + " §7| Shop prices loaded: §f" + shopPrices.size());\n            sender.sendMessage("§7Market rules loaded: §f" + marketRules.size() + " §7| Ledger entries retained: §f" + economyLedgerLines);
+            sender.sendMessage("§7Anomaly flags today: §f" + (flags == null ? 0 : flags.getKeys(false).size()));
+            sender.sendMessage("§7Sell prices loaded: §f" + prices.size() + " §7| Shop prices loaded: §f" + shopPrices.size());
+            sender.sendMessage("§7Market rules loaded: §f" + marketRules.size() + " §7| Ledger entries retained: §f" + economyLedgerLines);
             if (flags != null) {
                 for (String key : flags.getKeys(false)) {
                     sender.sendMessage("§cFLAG §f" + economyStatsData.getString("flags." + key, key));
@@ -1235,7 +1237,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 sender.sendMessage("§7Online verified accounts: §f" + balances.size());
                 sender.sendMessage("§7Online average balance: §f$" + money(average));
                 sender.sendMessage("§7Online median balance: §f$" + money(median));
-                sender.sendMessage("§7Online range: §f$" + money(minimum) + " — $" + money(maximum));\n                sender.sendMessage("§aAudit complete. §7Use §f/cweco history all §7to inspect recent buys and sells.");
+                sender.sendMessage("§7Online range: §f$" + money(minimum) + " — $" + money(maximum));
+                sender.sendMessage("§aAudit complete. §7Use §f/cweco history all §7to inspect recent buys and sells.");
             });
         });
     }
