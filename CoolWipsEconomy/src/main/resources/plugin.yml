@@ -59,7 +59,7 @@ commands:
     permission: coolwipseconomy.use
   cweconomy:
     description: CoolWips Economy administration.
-    usage: /cweconomy <reload|status|stats|audit|market|resetmarket|maintenance|block|unblock>
+    usage: /cweconomy <reload|status|stats|audit|history|market|resetmarket|maintenance|block|unblock>
     aliases: [cweco]
     permission: coolwipseconomy.admin
 permissions:
