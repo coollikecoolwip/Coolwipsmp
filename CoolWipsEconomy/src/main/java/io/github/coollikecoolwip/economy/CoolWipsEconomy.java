@@ -4323,6 +4323,21 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         if (name.equals("cweconomy") && args.length == 2
+                && args[0].equalsIgnoreCase("history")) {
+            List<String> suggestions = new ArrayList<>(List.of("all"));
+            Bukkit.getOnlinePlayers().stream()
+                    .map(Player::getName)
+                    .sorted()
+                    .forEach(suggestions::add);
+            return suggestions;
+        }
+
+        if (name.equals("cweconomy") && args.length == 3
+                && args[0].equalsIgnoreCase("history")) {
+            return List.of("1", "2", "3", "4", "5");
+        }
+
+        if (name.equals("cweconomy") && args.length == 2
                 && (args[0].equalsIgnoreCase("block") || args[0].equalsIgnoreCase("unblock"))) {
             return prices.keySet().stream().map(Enum::name).sorted().limit(100).toList();
         }
