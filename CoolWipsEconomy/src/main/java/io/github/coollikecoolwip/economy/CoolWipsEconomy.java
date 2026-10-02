@@ -1989,9 +1989,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 }
 
                 if (args[0].equalsIgnoreCase("status")) {
-                    p.sendMessage(owner.equals(p.getUniqueId())
-                            ? "§aThis is your sell chest."
-                            : "§cThis is another player's sell chest.");
+                    showSellChestStatus(p, target, owner);
                     return true;
                 }
 
@@ -2511,6 +2509,33 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         return true;
+    }
+
+    private void showSellChestStatus(Player player, Block block, UUID owner) {
+        String ownerName = Bukkit.getOfflinePlayer(owner).getName();
+        if (ownerName == null || ownerName.isBlank()) ownerName = owner.toString();
+
+        Inventory inventory = ((Chest) block.getState()).getInventory();
+        BigDecimal gross = BigDecimal.ZERO;
+        int sellableItems = 0;
+
+        for (ItemStack stack : inventory.getContents()) {
+            if (stack == null || stack.getType().isAir()) continue;
+            BigDecimal unit = prices.get(stack.getType());
+            if (unit == null || maintenanceBlocks.contains(stack.getType())) continue;
+            sellableItems += stack.getAmount();
+            gross = gross.add(unit.multiply(BigDecimal.valueOf(stack.getAmount())));
+        }
+
+        BigDecimal payout = afterTax(gross, sellTax);
+
+        player.sendMessage("§6§lSELL CHEST STATUS");
+        player.sendMessage("§7Owner: §f" + ownerName);
+        player.sendMessage("§7Location: §f" + block.getWorld().getName() + " "
+                + block.getX() + ", " + block.getY() + ", " + block.getZ());
+        player.sendMessage("§7Sellable items inside: §f" + sellableItems);
+        player.sendMessage("§7Current value: §a$" + money(gross) + " §7before tax");
+        player.sendMessage("§7Generates: §a$" + money(payout) + " §7after " + sellTax.multiply(BigDecimal.valueOf(100)) + "% tax");
     }
 
     private boolean isChestBlock(Block block) {
