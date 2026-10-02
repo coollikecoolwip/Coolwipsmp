@@ -84,6 +84,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     
     // Dynamic market for renewable/farm outputs: normal volumes keep full value,
     // heavy volume lowers only that item's sell price until the configured floor.
+    // These materials are permanently static: the market system is never allowed to
+    // apply a volume multiplier, floor, or market ledger to them.
+    private static final Set<Material> STATIC_MARKET_MATERIALS = EnumSet.of(
+            Material.DIAMOND, Material.DIAMOND_BLOCK
+    );
+
     private static final long DEFAULT_MARKET_FREE_UNITS = 2048L;
     private static final long DEFAULT_MARKET_STEP_UNITS = 512L;
     private static final BigDecimal DEFAULT_MARKET_DROP_PERCENT = new BigDecimal("0.65");
@@ -376,6 +382,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (!loaded.isEmpty()) {
                 marketRules.putAll(loaded);
             }
+            enforceStaticMarketMaterials();
             if (!loaded.isEmpty() || defaultMarketRule != null) {
                 getLogger().info("Loaded bundled market rules.");
             }
@@ -580,7 +587,20 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return name.contains("WOOL") || name.endsWith("_CARPET") || name.endsWith("_BED");
     }
 
+    private void enforceStaticMarketMaterials() {
+        for (Material material : STATIC_MARKET_MATERIALS) {
+            if (marketRules.remove(material) != null) {
+                getLogger().warning("Removed invalid dynamic market rule for static material " + material + ".");
+            }
+        }
+    }
+
+    private boolean isStaticMarketMaterial(Material material) {
+        return material != null && STATIC_MARKET_MATERIALS.contains(material);
+    }
+
     private MarketRule marketRuleFor(Material material) {
+        if (isStaticMarketMaterial(material)) return null;
         MarketRule rule = marketRules.get(material);
         return rule != null ? rule : defaultMarketRule;
     }
@@ -590,7 +610,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private BigDecimal marketUnitPrice(UUID owner, Material material, long sold) {
         BigDecimal base = prices.get(material);
-        if (base == null || !isFarmIncomeMaterial(material)) return base;
+        if (base == null || isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) return base;
 
         MarketRule rule = marketRuleFor(material);
         if (rule == null || sold < rule.fullPriceUnits()
@@ -614,7 +634,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketGrossForSale(UUID owner, Material material, long sold, int amount) {
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return BigDecimal.ZERO;
-        if (!isFarmIncomeMaterial(material)) return base.multiply(BigDecimal.valueOf(amount));
+        if (isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) return base.multiply(BigDecimal.valueOf(amount));
 
         MarketRule rule = marketRuleFor(material);
         if (rule == null) return base.multiply(BigDecimal.valueOf(amount));
@@ -646,7 +666,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private BigDecimal currentSellPrice(UUID owner, Material material) {
         BigDecimal base = prices.get(material);
-        if (base == null || !isFarmIncomeMaterial(material) || owner == null) return base;
+        if (base == null || isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material) || owner == null) return base;
         marketLock.lock();
         try {
             refreshMarketDayLocked();
@@ -662,7 +682,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private MarketSale reserveMarketSale(UUID owner, Material material, int amount) {
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return null;
-        if (!isFarmIncomeMaterial(material)) {
+        if (isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) {
             return new MarketSale(owner, material, amount, base.multiply(BigDecimal.valueOf(amount)), false);
         }
 
@@ -704,7 +724,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 BigDecimal base = prices.get(material);
                 if (base == null || amount <= 0) continue;
 
-                boolean tracked = isFarmIncomeMaterial(material);
+                boolean tracked = !isStaticMarketMaterial(material) && isFarmIncomeMaterial(material);
                 long sold = soldMap.getOrDefault(material, 0L);
                 long pricingSold = Math.max(sold, peakMap.getOrDefault(material, 0L));
                 BigDecimal gross = tracked ? marketGrossForSale(owner, material, pricingSold, amount)
@@ -1533,6 +1553,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         try {
                             marketRules.clear();
                             marketRules.putAll(loaded);
+                            enforceStaticMarketMaterials();
                             if (fingerprint != marketRulesFingerprint && marketData != null) {
                                 marketSoldToday.clear();
                                 marketPeakSoldToday.clear();
