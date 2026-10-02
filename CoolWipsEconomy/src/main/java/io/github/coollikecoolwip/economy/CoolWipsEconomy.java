@@ -1782,7 +1782,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return loaded;
     }
 
-    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination) {\n        loadRemoteSellFile(fileUrl, label, destination, false);\n    }\n\n    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination, boolean controlsSellReadiness) {
+    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination) {
+        loadRemoteSellFile(fileUrl, label, destination, false);
+    }
+
+    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination, boolean controlsSellReadiness) {
         if (fileUrl.isBlank()) {
             getLogger().warning("Remote " + label + " URL is blank.");
             return;
