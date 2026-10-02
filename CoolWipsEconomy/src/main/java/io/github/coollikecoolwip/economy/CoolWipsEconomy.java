@@ -1553,6 +1553,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     if (!loaded.isEmpty()) {
                         marketLock.lock();
                         try {
+                            // Publish the complete market-rule snapshot on the server thread.
                             marketRules.clear();
                             marketRules.putAll(loaded);
                             enforceStaticMarketMaterials();
@@ -1679,10 +1680,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     return;
                 }
 
-                destination.clear();
-                destination.putAll(loaded);
-                validateShopPrices();
-                getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
+                // Parse completely off-thread, then publish the finished snapshot on
+                // the server thread. Never mutate the live price map from an async task.
+                Bukkit.getScheduler().runTask(this, () -> {
+                    destination.clear();
+                    destination.putAll(loaded);
+                    validateShopPrices();
+                    getLogger().info("Loaded " + loaded.size() + " " + label
+                            + " entries into memory from GitHub.");
+                });
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
