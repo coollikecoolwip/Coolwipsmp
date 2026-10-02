@@ -1705,14 +1705,25 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    getLogger().warning("Could not load remote " + label + " (HTTP "
-                            + response.statusCode() + "). Keeping local values.");
+                    if ("prices.txt".equals(label)) {
+                        pricesReady.set(false);
+                        getLogger().severe("prices.txt could not be loaded (HTTP "
+                                + response.statusCode() + "). Selling is disabled until prices.txt is available.");
+                    } else {
+                        getLogger().warning("Could not load remote " + label + " (HTTP "
+                                + response.statusCode() + "). Keeping local values.");
+                    }
                     return;
                 }
 
                 Map<Material, BigDecimal> loaded = parseSellPrices(response.body(), label);
                 if (loaded.isEmpty()) {
-                    getLogger().warning("Remote " + label + " contained no valid prices. Keeping local values.");
+                    if ("prices.txt".equals(label)) {
+                        pricesReady.set(false);
+                        getLogger().severe("prices.txt contained no valid prices. Selling is disabled until prices.txt is available.");
+                    } else {
+                        getLogger().warning("Remote " + label + " contained no valid prices. Keeping local values.");
+                    }
                     return;
                 }
 
@@ -1721,7 +1732,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 Bukkit.getScheduler().runTask(this, () -> {
                     validateCraftingEconomy();
                     validateShopPrices();
-                    getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
+                    if ("prices.txt".equals(label)) {
+                        pricesReady.set(true);
+                        getLogger().info("prices.txt loaded successfully. Selling enabled with "
+                                + loaded.size() + " prices.");
+                    } else {
+                        getLogger().info("Loaded " + loaded.size() + " " + label + " entries from GitHub.");
+                    }
                 });
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
