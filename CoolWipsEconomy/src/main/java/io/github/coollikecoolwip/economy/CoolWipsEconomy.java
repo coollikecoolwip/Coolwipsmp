@@ -1526,14 +1526,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void loadRemotePrices() {
         pricesReady.set(false);
         prices.clear();
-        loadRemoteSellFile(pricesUrl, "prices.txt", prices);
-        if (prices.isEmpty()) {
-            getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
-            pricesReady.set(false);
-        } else {
-            pricesReady.set(true);
-            getLogger().info("prices.txt loaded successfully. Selling enabled with " + prices.size() + " prices.");
-        }
+        loadRemoteSellFile(pricesUrl, "prices.txt", prices, true);
     }
 
     private void loadRemoteShop() {
@@ -1714,6 +1707,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             } catch (Exception e) {
                 getLogger().warning("Could not load remote " + label + ": "
                         + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+                if (controlsSellReadiness) {
+                    pricesReady.set(false);
+                    getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
+                }
             }
         });
     }
@@ -1785,7 +1782,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return loaded;
     }
 
-    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination) {
+    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination) {\n        loadRemoteSellFile(fileUrl, label, destination, false);\n    }\n\n    private void loadRemoteSellFile(String fileUrl, String label, Map<Material, BigDecimal> destination, boolean controlsSellReadiness) {
         if (fileUrl.isBlank()) {
             getLogger().warning("Remote " + label + " URL is blank.");
             return;
@@ -1807,18 +1804,30 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
                     getLogger().warning("Could not load remote " + label + " (HTTP "
-                            + response.statusCode() + "). Keeping local values.");
+                            + response.statusCode() + ").");
+                    if (controlsSellReadiness) {
+                        pricesReady.set(false);
+                        getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
+                    }
                     return;
                 }
 
                 Map<Material, BigDecimal> loaded = parseSellPrices(response.body(), label);
                 if (loaded.isEmpty()) {
-                    getLogger().warning("Remote " + label + " contained no valid prices. Keeping local values.");
+                    getLogger().warning("Remote " + label + " contained no valid prices.");
+                    if (controlsSellReadiness) {
+                        pricesReady.set(false);
+                        getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
+                    }
                     return;
                 }
 
                 destination.clear();
                 destination.putAll(loaded);
+                if (controlsSellReadiness) {
+                    pricesReady.set(true);
+                    getLogger().info("prices.txt loaded successfully. Selling enabled with " + loaded.size() + " prices.");
+                }
                 Bukkit.getScheduler().runTask(this, () -> {
                     validateCraftingEconomy();
                     validateShopPrices();
