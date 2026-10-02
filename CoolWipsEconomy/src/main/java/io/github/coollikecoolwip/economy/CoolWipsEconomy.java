@@ -1668,15 +1668,24 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
                 if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                    getLogger().warning("Could not load remote " + label + " (HTTP "
-                            + response.statusCode() + "). Keeping local values.");
+                    getLogger().severe("Could not load remote " + label + " (HTTP "
+                            + response.statusCode() + "). Sell prices will NOT use stale local values.");
+                    Bukkit.getScheduler().runTask(this, destination::clear);
                     return;
                 }
 
                 Map<Material, Long> loaded = parsePrices(response.body(), label);
                 if (loaded.isEmpty()) {
-                    getLogger().warning("Remote " + label + " contained no valid prices. Keeping local values.");
+                    getLogger().severe("Remote " + label + " contained no valid prices. Sell prices will NOT use stale local values.");
+                    Bukkit.getScheduler().runTask(this, destination::clear);
                     return;
+                }
+
+                if ("prices.txt".equals(label)) {
+                    BigDecimal diamondBlock = BigDecimal.valueOf(loaded.getOrDefault(Material.DIAMOND_BLOCK, -1L));
+                    BigDecimal emeraldBlock = BigDecimal.valueOf(loaded.getOrDefault(Material.EMERALD_BLOCK, -1L));
+                    getLogger().info("prices.txt authoritative values: DIAMOND_BLOCK=$"
+                            + diamondBlock + ", EMERALD_BLOCK=$" + emeraldBlock);
                 }
 
                 // Parse completely off-thread, then publish the finished snapshot on
