@@ -87,7 +87,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // These materials are permanently static: the market system is never allowed to
     // apply a volume multiplier, floor, or market ledger to them.
     private static final Set<Material> STATIC_MARKET_MATERIALS = EnumSet.of(
-            Material.DIAMOND, Material.DIAMOND_BLOCK
+            Material.DIAMOND, Material.DIAMOND_BLOCK, Material.EMERALD_BLOCK
     );
 
     private static final long DEFAULT_MARKET_FREE_UNITS = 2048L;
