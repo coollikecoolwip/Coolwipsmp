@@ -1428,16 +1428,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void loadRemotePrices() {
+        // Loading is asynchronous. Do not inspect prices immediately after starting
+        // the request or an empty map will falsely look like a failed download.
         pricesReady.set(false);
         prices.clear();
         loadRemoteSellFile(pricesUrl, "prices.txt", prices);
-        if (prices.isEmpty()) {
-            getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
-            pricesReady.set(false);
-        } else {
-            pricesReady.set(true);
-            getLogger().info("prices.txt loaded successfully. Selling enabled with " + prices.size() + " prices.");
-        }
     }
 
     private void loadRemoteShop() {
