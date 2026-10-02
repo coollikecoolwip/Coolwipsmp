@@ -1,4 +1,4 @@
-# CoolWips Economy 1.3.3
+# CoolWips Economy 1.3.4
 
 Simple Paper 26.2 economy plugin for CoolWips SMP.
 
@@ -10,7 +10,7 @@ Requirements:
 
 Install:
 1. Build with build.bat.
-2. Put the built `target/CoolWipsEconomy-1.3.3.jar` in `plugins/`.
+2. Put the built `target/CoolWipsEconomy-1.3.4.jar` in `plugins/`.
 3. Start the server once.
 4. Open plugins/CoolWipsEconomy/config.yml.
 5. Put your UnbelievaBoat API token in api-token.
