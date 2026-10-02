@@ -1969,6 +1969,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         p.sendMessage("§cThat chest is already part of a sell chest.");
                         return true;
                     }
+
+                    // A command can bypass normal chest placement/break protection. Ask the
+                    // server's protection/claim plugins whether this player may modify the
+                    // target chest before converting it into a sell chest.
+                    if (!canModifySellChest(p, target)) return true;
+                    Block adjacent = adjacentChest(target);
+                    if (adjacent != null && !canModifySellChest(p, adjacent)) return true;
+
                     markSellChest(target, p.getUniqueId());
                     p.sendMessage("§aSell chest created. Put sellable items inside and close the chest to sell them.");
                     return true;
@@ -2487,6 +2495,22 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 Bukkit.getScheduler().runTask(this, () -> scheduleAutomaticSellChest(inventory));
             });
         });
+    }
+
+    private boolean canModifySellChest(Player player, Block block) {
+        if (player.isOp()) return true;
+
+        // Fire the normal block-break protection event without actually breaking the
+        // block. Claim/protection plugins commonly enforce their build permissions here.
+        // We only use the cancellation result; the chest itself is never modified.
+        BlockBreakEvent protectionCheck = new BlockBreakEvent(block, player);
+        Bukkit.getPluginManager().callEvent(protectionCheck);
+        if (protectionCheck.isCancelled()) {
+            player.sendMessage("§cYou cannot create a sell chest here because this chest is protected.");
+            return false;
+        }
+
+        return true;
     }
 
     private boolean isChestBlock(Block block) {
