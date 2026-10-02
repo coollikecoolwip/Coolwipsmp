@@ -35,6 +35,16 @@ jobs:
           cache: maven
           cache-dependency-path: CoolWipsEconomy/pom.xml
 
+      - name: Sync to latest main
+        working-directory: .
+        shell: bash
+        run: |
+          # A build can start while newer version commits are being pushed.
+          # Always build the current main branch, not the older event commit.
+          git fetch origin main
+          git reset --hard origin/main
+          git clean -fd
+
       - name: Build
         run: mvn -U --batch-mode clean package
 
