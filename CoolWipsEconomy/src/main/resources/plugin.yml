@@ -1,5 +1,5 @@
 name: CoolWipsEconomy
-version: '1.4.2'
+version: '1.4.3'
 main: io.github.coollikecoolwip.economy.CoolWipsEconomy
 description: Sell and buy Minecraft items for UnbelievaBoat cash using DiscordSRV.
 author: coollikecoolwip
