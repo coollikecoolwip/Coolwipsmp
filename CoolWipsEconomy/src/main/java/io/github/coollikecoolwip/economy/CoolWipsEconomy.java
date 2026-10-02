@@ -1388,38 +1388,26 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private int validateCraftingEconomy() {
         if (prices.isEmpty()) return 0;
-        int totalAdjustments = 0;
 
-        for (int pass = 0; pass < 8; pass++) {
-            int passAdjustments = 0;
-            Iterator<Recipe> iterator = Bukkit.recipeIterator();
+        // prices.txt is authoritative. This check is diagnostic only and must
+        // never rewrite live sell prices. A crafted item's price may intentionally
+        // be higher than its input cost (for example DIAMOND_BLOCK and EMERALD_BLOCK).
+        int violations = 0;
+        Iterator<Recipe> iterator = Bukkit.recipeIterator();
 
-            while (iterator.hasNext()) {
-                Recipe recipe = iterator.next();
-                ItemStack result = recipe.getResult();
-                if (result == null || result.getType().isAir() || result.getAmount() <= 0) continue;
+        while (iterator.hasNext()) {
+            Recipe recipe = iterator.next();
+            ItemStack result = recipe.getResult();
+            if (result == null || result.getType().isAir() || result.getAmount() <= 0) continue;
 
-                BigDecimal inputValue = BigDecimal.ZERO;
-                boolean allPriced = true;
+            BigDecimal inputValue = BigDecimal.ZERO;
+            boolean allPriced = true;
 
-                if (recipe instanceof ShapedRecipe shaped) {
-                    Map<Character, ItemStack> ingredientMap = shaped.getIngredientMap();
-                    for (String row : shaped.getShape()) {
-                        for (int i = 0; i < row.length(); i++) {
-                            ItemStack ingredient = ingredientMap.get(row.charAt(i));
-                            if (ingredient == null || ingredient.getType().isAir()) continue;
-                            BigDecimal value = prices.get(ingredient.getType());
-                            if (value == null) {
-                                allPriced = false;
-                                break;
-                            }
-                            inputValue = inputValue.add(value.multiply(
-                                    BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
-                        }
-                        if (!allPriced) break;
-                    }
-                } else if (recipe instanceof ShapelessRecipe shapeless) {
-                    for (ItemStack ingredient : shapeless.getIngredientList()) {
+            if (recipe instanceof ShapedRecipe shaped) {
+                Map<Character, ItemStack> ingredientMap = shaped.getIngredientMap();
+                for (String row : shaped.getShape()) {
+                    for (int i = 0; i < row.length(); i++) {
+                        ItemStack ingredient = ingredientMap.get(row.charAt(i));
                         if (ingredient == null || ingredient.getType().isAir()) continue;
                         BigDecimal value = prices.get(ingredient.getType());
                         if (value == null) {
@@ -1429,64 +1417,75 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                         inputValue = inputValue.add(value.multiply(
                                 BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
                     }
-                } else if (recipe instanceof StonecuttingRecipe stonecutting) {
-                    BigDecimal value = minimumRecipeChoiceSellValue(stonecutting.getInputChoice());
-                    if (value == null) allPriced = false;
-                    else inputValue = inputValue.add(value);
-                } else if (recipe instanceof CookingRecipe<?> cooking) {
-                    BigDecimal value = minimumRecipeChoiceSellValue(cooking.getInputChoice());
-                    if (value == null) allPriced = false;
-                    else inputValue = inputValue.add(value);
-                } else if (recipe instanceof SmithingTransformRecipe smithing) {
-                    BigDecimal template = minimumRecipeChoiceSellValue(smithing.getTemplate());
-                    BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
-                    BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
-                    if (template == null || base == null || addition == null) {
+                    if (!allPriced) break;
+                }
+            } else if (recipe instanceof ShapelessRecipe shapeless) {
+                for (ItemStack ingredient : shapeless.getIngredientList()) {
+                    if (ingredient == null || ingredient.getType().isAir()) continue;
+                    BigDecimal value = prices.get(ingredient.getType());
+                    if (value == null) {
                         allPriced = false;
-                    } else {
-                        inputValue = inputValue.add(template).add(base).add(addition);
+                        break;
                     }
-                } else if (recipe instanceof SmithingRecipe smithing) {
-                    BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
-                    BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
-                    if (base == null || addition == null) {
-                        allPriced = false;
-                    } else {
-                        inputValue = inputValue.add(base).add(addition);
-                    }
-                } else if (recipe instanceof TransmuteRecipe transmute) {
-                    BigDecimal input = minimumRecipeChoiceSellValue(transmute.getInput());
-                    BigDecimal material = minimumRecipeChoiceSellValue(transmute.getMaterial());
-                    if (input == null || material == null) {
-                        allPriced = false;
-                    } else {
-                        inputValue = inputValue.add(input).add(material);
-                    }
+                    inputValue = inputValue.add(value.multiply(
+                            BigDecimal.valueOf(Math.max(1, ingredient.getAmount()))));
+                }
+            } else if (recipe instanceof StonecuttingRecipe stonecutting) {
+                BigDecimal value = minimumRecipeChoiceSellValue(stonecutting.getInputChoice());
+                if (value == null) allPriced = false;
+                else inputValue = inputValue.add(value);
+            } else if (recipe instanceof CookingRecipe<?> cooking) {
+                BigDecimal value = minimumRecipeChoiceSellValue(cooking.getInputChoice());
+                if (value == null) allPriced = false;
+                else inputValue = inputValue.add(value);
+            } else if (recipe instanceof SmithingTransformRecipe smithing) {
+                BigDecimal template = minimumRecipeChoiceSellValue(smithing.getTemplate());
+                BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
+                BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
+                if (template == null || base == null || addition == null) {
+                    allPriced = false;
                 } else {
-                    continue;
+                    inputValue = inputValue.add(template).add(base).add(addition);
                 }
-
-                BigDecimal current = prices.get(result.getType());
-                if (!allPriced || current == null || inputValue.signum() <= 0) continue;
-
-                BigDecimal safe = inputValue
-                        .divide(BigDecimal.valueOf(result.getAmount()), 6, RoundingMode.DOWN)
-                        .multiply(new BigDecimal("0.95"))
-                        .setScale(6, RoundingMode.DOWN)
-                        .max(new BigDecimal("0.000001"));
-
-                if (current.compareTo(safe) > 0) {
-                    prices.put(result.getType(), safe);
-                    passAdjustments++;
-                    getLogger().warning("CRAFTING_PRICE_GUARD | " + result.getType()
-                            + " => $" + safe.stripTrailingZeros().toPlainString());
+            } else if (recipe instanceof SmithingRecipe smithing) {
+                BigDecimal base = minimumRecipeChoiceSellValue(smithing.getBase());
+                BigDecimal addition = minimumRecipeChoiceSellValue(smithing.getAddition());
+                if (base == null || addition == null) {
+                    allPriced = false;
+                } else {
+                    inputValue = inputValue.add(base).add(addition);
                 }
+            } else if (recipe instanceof TransmuteRecipe transmute) {
+                BigDecimal input = minimumRecipeChoiceSellValue(transmute.getInput());
+                BigDecimal material = minimumRecipeChoiceSellValue(transmute.getMaterial());
+                if (input == null || material == null) {
+                    allPriced = false;
+                } else {
+                    inputValue = inputValue.add(input).add(material);
+                }
+            } else {
+                continue;
             }
 
-            totalAdjustments += passAdjustments;
-            if (passAdjustments == 0) break;
+            BigDecimal current = prices.get(result.getType());
+            if (!allPriced || current == null || inputValue.signum() <= 0) continue;
+
+            BigDecimal safe = inputValue
+                    .divide(BigDecimal.valueOf(result.getAmount()), 6, RoundingMode.DOWN)
+                    .multiply(new BigDecimal("0.95"))
+                    .setScale(6, RoundingMode.DOWN)
+                    .max(new BigDecimal("0.000001"));
+
+            if (current.compareTo(safe) > 0) {
+                violations++;
+            }
         }
-        return totalAdjustments;
+
+        if (violations > 0) {
+            getLogger().info("Crafting price check found " + violations
+                    + " prices above their calculated input-cost guard; prices.txt values were left unchanged.");
+        }
+        return violations;
     }
 
     private BigDecimal minimumRecipeChoiceSellValue(RecipeChoice choice) {
@@ -3998,445 +3997,3 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         p.getInventory().setStorageContents(before);
         return false;
     }
-
-    private int count(Player p, Material material) {
-        int total = 0;
-        for (ItemStack stack : p.getInventory().getStorageContents()) {
-            if (stack != null && stack.getType() == material) total += stack.getAmount();
-        }
-        return total;
-    }
-
-    private List<ItemStack> takeItems(Player p, Material material, int amount) {
-        List<ItemStack> taken = new ArrayList<>();
-        ItemStack[] contents = p.getInventory().getStorageContents();
-        int left = amount;
-
-        for (int i = 0; i < contents.length && left > 0; i++) {
-            ItemStack stack = contents[i];
-            if (stack == null || stack.getType() != material) continue;
-
-            int take = Math.min(left, stack.getAmount());
-            ItemStack part = stack.clone();
-            part.setAmount(take);
-            taken.add(part);
-
-            if (take == stack.getAmount()) contents[i] = null;
-            else stack.setAmount(stack.getAmount() - take);
-            left -= take;
-        }
-
-        p.getInventory().setStorageContents(contents);
-        return taken;
-    }
-
-    private List<ItemStack> giveItems(Player p, List<ItemStack> items) {
-        List<ItemStack> leftovers = new ArrayList<>();
-        for (ItemStack item : items) {
-            Map<Integer, ItemStack> result = p.getInventory().addItem(item.clone());
-            leftovers.addAll(result.values());
-        }
-        return leftovers;
-    }
-
-    private void restoreItems(Player p, List<ItemStack> items) {
-        List<ItemStack> leftovers = giveItems(p, items);
-        for (ItemStack stack : leftovers) {
-            p.getWorld().dropItemNaturally(p.getLocation(), stack);
-        }
-    }
-
-    private void remove(Player p, Material material, int amount) {
-        ItemStack[] contents = p.getInventory().getStorageContents();
-        int left = amount;
-
-        for (int i = 0; i < contents.length && left > 0; i++) {
-            ItemStack stack = contents[i];
-            if (stack == null || stack.getType() != material) continue;
-
-            int take = Math.min(left, stack.getAmount());
-            if (take == stack.getAmount()) contents[i] = null;
-            else stack.setAmount(stack.getAmount() - take);
-            left -= take;
-        }
-
-        p.getInventory().setStorageContents(contents);
-    }
-
-    private long afterTax(BigDecimal gross, double tax) {
-        if (gross == null || gross.signum() <= 0) return 0L;
-        BigDecimal multiplier = BigDecimal.ONE.subtract(BigDecimal.valueOf(tax));
-        try {
-            return Math.max(0, gross.multiply(multiplier)
-                    .setScale(0, RoundingMode.HALF_UP)
-                    .longValueExact());
-        } catch (ArithmeticException e) {
-            getLogger().severe("Rejected economy payout because it overflowed the long range.");
-            return 0L;
-        }
-    }
-
-    private boolean sellPricesReady(Player p) {
-        if (pricesReady.get()) return true;
-        p.sendMessage("§cThat item cannot be sold right now because the sell prices could not be loaded.");
-        return false;
-    }
-
-    private boolean cooldownReady(Player p) {
-        if (transactionCooldownMs <= 0) return true;
-        long now = System.currentTimeMillis();
-        long last = lastTransaction.getOrDefault(p.getUniqueId(), 0L);
-        long remaining = transactionCooldownMs - (now - last);
-        if (remaining > 0) {
-            p.sendMessage("§cPlease wait " + String.format(Locale.US, "%.1f", remaining / 1000.0) + "s before another transaction.");
-            return false;
-        }
-        lastTransaction.put(p.getUniqueId(), now);
-        return true;
-    }
-
-    private String money(long value) {
-        return String.format(Locale.US, "%,d", value);
-    }
-
-    private void cleanupExpiredPendingState() {
-        long now = System.currentTimeMillis();
-        pendingSales.entrySet().removeIf(entry -> entry.getValue().expiresAt() < now);
-        pendingTrades.entrySet().removeIf(entry -> entry.getValue().expiresAt() < now);
-    }
-
-    private void record(Transaction transaction) {
-        synchronized (history) {
-            history.addFirst(transaction);
-            while (history.size() > 1000) history.removeLast();
-        }
-    }
-
-    private record PendingSale(String material, int amount, long payout, long expiresAt) {}
-    private record Bounty(String targetName, long amount) {}
-    private record PendingTrade(UUID buyerUuid, UUID sellerUuid, String sellerName, String material, int amount,
-                                long total, long expiresAt) {}
-    private record Transaction(UUID uuid, String player, String material, int amount, long money,
-                               boolean purchase, String timestamp) {}
-
-    private boolean success(HttpResult result) {
-        return result.status >= 200 && result.status < 300;
-    }
-
-    private Long parseBank(String body) {
-        try {
-            Matcher match = BANK.matcher(body == null ? "" : body);
-            return match.find() ? Long.parseLong(match.group(1)) : null;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String linkedId(UUID uuid) {
-        try {
-            String id = DiscordSRV.getPlugin().getAccountLinkManager().getDiscordId(uuid);
-            return (id == null || id.isBlank()) ? null : id;
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private String linkedId(Player p) {
-        try {
-            String id = DiscordSRV.getPlugin().getAccountLinkManager().getDiscordId(p.getUniqueId());
-            if (id == null || id.isBlank()) {
-                p.sendMessage("§cLink your Minecraft account with DiscordSRV first.");
-                return null;
-            }
-            return id;
-        } catch (Exception e) {
-            p.sendMessage("§cCould not read your DiscordSRV link.");
-            return null;
-        }
-    }
-
-    private void balance(Player p) {
-        String id = linkedId(p);
-        if (id == null) return;
-
-        p.sendMessage("§7Checking UnbelievaBoat balance...");
-
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult result = api("GET", userUrl(id), null);
-            Matcher match = BANK.matcher(result.body);
-
-            if (success(result) && match.find()) {
-                Bukkit.getScheduler().runTask(this, () ->
-                        p.sendMessage("§aUnbelievaBoat bank: §f$" + match.group(1)));
-            } else {
-                Bukkit.getScheduler().runTask(this, () ->
-                        p.sendMessage("§cBalance lookup failed (HTTP " + result.status + ")."));
-            }
-        });
-    }
-
-    private void showHistory(Player p) {
-        List<Transaction> mine;
-        synchronized (history) {
-            mine = history.stream()
-                    .filter(t -> t.uuid().equals(p.getUniqueId()))
-                    .limit(10)
-                    .toList();
-        }
-
-        p.sendMessage("§6§lCoolWips Economy History");
-        if (mine.isEmpty()) {
-            p.sendMessage("§7No transactions recorded since the plugin was started.");
-            return;
-        }
-
-        for (Transaction t : mine) {
-            String action = t.purchase() ? "Bought" : "Sold";
-            String sign = t.purchase() ? "§c-$" : "§a+$";
-            p.sendMessage("§7" + action + " §f" + t.amount() + "x " + pretty(Material.matchMaterial(t.material()))
-                    + " §7for " + sign + money(t.money()));
-        }
-    }
-
-    private void status(CommandSender sender) {
-        sender.sendMessage("§6CoolWips Economy");
-        sender.sendMessage("§7API token: " + (tokenMissing() ? "§cNOT SET" : "§aSET"));
-        sender.sendMessage("§7Guild ID: §f" + (guildId.isBlank() ? "missing" : guildId));
-        sender.sendMessage("§7DiscordSRV: " +
-                (Bukkit.getPluginManager().isPluginEnabled("DiscordSRV") ? "§aenabled" : "§cdisabled"));
-        sender.sendMessage("§7Sell prices: §f" + prices.size());
-        sender.sendMessage("§7Shop prices: §f" + shopPrices.size());
-        sender.sendMessage("§7Sell maintenance: " + (sellsDisabled ? "§cBLOCKED" : "§aENABLED"));
-        sender.sendMessage("§7Dynamic renewable market: §aenabled");
-        sender.sendMessage("§7Full-price volume per item: §f" + marketFreeUnits + " units/day");
-        sender.sendMessage("§7Price drop per step: §f" + marketDropPercent.multiply(BigDecimal.valueOf(100)).stripTrailingZeros().toPlainString() + "%");
-        sender.sendMessage("§7Minimum market price: §f$" + marketMinPrice.stripTrailingZeros().toPlainString());
-        sender.sendMessage("§7Custom market rules: §f" + marketRules.size() + " (per-player market)");
-        sender.sendMessage("§7Economy stats: §f/cweconomy stats");
-        sender.sendMessage("§7Economy audit: §f/cweconomy audit");
-        sender.sendMessage("§7Market rules URL: §f" + marketRulesUrl);
-        sender.sendMessage("§7Prices URL: §f" + pricesUrl);
-        sender.sendMessage("§7Shop URL: §f" + shopUrl);
-
-        if (tokenMissing()) return;
-
-        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-            HttpResult result = api("GET", baseUrl + "/guilds/" + guildId, null);
-            Bukkit.getScheduler().runTask(this, () ->
-                    sender.sendMessage(success(result)
-                            ? "§aUnbelievaBoat API: connected"
-                            : "§cUnbelievaBoat API: HTTP " + result.status));
-        });
-    }
-
-    private Map<Material, BigDecimal> currentSellPrices(UUID owner) {
-        Map<Material, BigDecimal> snapshot = new HashMap<>();
-        for (Material material : prices.keySet()) {
-            BigDecimal value = currentSellPrice(owner, material);
-            if (value != null) snapshot.put(material, value);
-        }
-        return snapshot;
-    }
-
-    private void showPaged(CommandSender sender, Map<Material, ?> map,
-                           int page, String title, String command) {
-        List<? extends Map.Entry<Material, ?>> list = map.entrySet().stream()
-                .sorted(Comparator.comparing(e -> e.getKey().name()))
-                .toList();
-
-        int pages = Math.max(1, (int) Math.ceil(list.size() / (double) pricesPerPage));
-        if (page > pages) {
-            sender.sendMessage("§cThat page doesn't exist. Pages: " + pages);
-            return;
-        }
-
-        sender.sendMessage("§6§l" + title + " §7(Page " + page + "/" + pages + ")");
-
-        int start = (page - 1) * pricesPerPage;
-        for (int i = start; i < Math.min(start + pricesPerPage, list.size()); i++) {
-            sender.sendMessage("§f" + pretty(list.get(i).getKey())
-                    + " §7- §a$" + list.get(i).getValue() + " §7each");
-        }
-
-        if (page < pages) sender.sendMessage("§7Next: §f" + command + " " + (page + 1));
-    }
-
-    private void maintenance(CommandSender sender, String[] args) {
-        if (!sender.isOp()) {
-            sender.sendMessage("§cOnly server operators can use sale maintenance.");
-            return;
-        }
-
-        if (args.length == 1 || args[1].equalsIgnoreCase("status")) {
-            sender.sendMessage("§6Sale maintenance: "
-                    + (sellsDisabled ? "§cALL SELLS BLOCKED" : "§aALL SELLS ENABLED"));
-            sender.sendMessage("§7Blocked items: §f" + (maintenanceBlocks.isEmpty()
-                    ? "none"
-                    : maintenanceBlocks.stream().map(this::pretty).sorted()
-                    .reduce((a, b) -> a + ", " + b).orElse("none")));
-            return;
-        }
-
-        String action = args[1].toLowerCase(Locale.ROOT);
-
-        if (action.equals("on") || action.equals("off")) {
-            sellsDisabled = action.equals("on");
-            getConfig().set("maintenance.all-sells-disabled", sellsDisabled);
-            saveConfig();
-            sender.sendMessage(sellsDisabled
-                    ? "§cAll selling is now BLOCKED."
-                    : "§aAll selling is now ENABLED.");
-            return;
-        }
-
-        if ((action.equals("block") || action.equals("unblock")) && args.length >= 3) {
-            Material material = matchMaterial(String.join("_",
-                    Arrays.copyOfRange(args, 2, args.length)));
-
-            if (material == null) {
-                sender.sendMessage("§cUnknown item.");
-                return;
-            }
-
-            if (action.equals("block")) {
-                maintenanceBlocks.add(material);
-                sender.sendMessage("§cSelling " + pretty(material) + " is now BLOCKED.");
-            } else {
-                maintenanceBlocks.remove(material);
-                sender.sendMessage("§aSelling " + pretty(material) + " is now ENABLED.");
-            }
-
-            getConfig().set("maintenance.blocked-items",
-                    maintenanceBlocks.stream().map(Enum::name).sorted().toList());
-            saveConfig();
-            return;
-        }
-
-        sender.sendMessage("§e/cweconomy maintenance on §7- block all sells");
-        sender.sendMessage("§e/cweconomy maintenance off §7- allow all sells");
-        sender.sendMessage("§e/cweconomy maintenance block <item>");
-        sender.sendMessage("§e/cweconomy maintenance unblock <item>");
-        sender.sendMessage("§e/cweconomy maintenance status");
-    }
-
-    private Material matchMaterial(String raw) {
-        return Material.matchMaterial(raw.replace('-', '_')
-                .replace(' ', '_')
-                .toUpperCase(Locale.ROOT));
-    }
-
-    private String pretty(Material material) {
-        StringBuilder out = new StringBuilder();
-        for (String part : material.name().toLowerCase(Locale.ROOT).split("_")) {
-            out.append(Character.toUpperCase(part.charAt(0)))
-                    .append(part.substring(1)).append(' ');
-        }
-        return out.toString().trim();
-    }
-
-    @Override public List<String> onTabComplete(CommandSender sender, Command command,
-                                                 String alias, String[] args) {
-        String name = command.getName().toLowerCase(Locale.ROOT);
-
-        if ((name.equals("sell") || name.equals("sellall")) && args.length == 1) {
-            String query = args[0].toUpperCase(Locale.ROOT);
-            return prices.keySet().stream().map(Enum::name)
-                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
-        }
-
-        if (name.equals("buy") && args.length == 1) {
-            String query = args[0].toUpperCase(Locale.ROOT);
-            return shopPrices.keySet().stream().map(Enum::name)
-                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
-        }
-
-        if ((name.equals("prices") || name.equals("shop")) && args.length == 1) {
-            return List.of("1", "2", "3", "4", "5");
-        }
-
-        if ((name.equals("sellto") || name.equals("buyfrom")) && args.length == 2) {
-            String query = args[1].toUpperCase(Locale.ROOT);
-            return prices.keySet().stream().map(Enum::name)
-                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
-        }
-
-        if (name.equals("pay") && args.length == 1) {
-            String query = args[0].toLowerCase(Locale.ROOT);
-            List<String> suggestions = new ArrayList<>(List.of("confirm", "cancel"));
-            Bukkit.getOnlinePlayers().stream()
-                    .map(Player::getName)
-                    .filter(x -> x.toLowerCase(Locale.ROOT).startsWith(query))
-                    .sorted()
-                    .limit(48)
-                    .forEach(suggestions::add);
-            return suggestions;
-        }
-
-        if (name.equals("pay") && args.length == 2) {
-            String query = args[1].toUpperCase(Locale.ROOT);
-            return prices.keySet().stream().map(Enum::name)
-                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
-        }
-
-        if (name.equals("bounty") && args.length == 1) {
-            String query = args[0].toLowerCase(Locale.ROOT);
-            List<String> suggestions = new ArrayList<>(List.of("list"));
-            Bukkit.getOnlinePlayers().stream()
-                    .map(Player::getName)
-                    .filter(x -> x.toLowerCase(Locale.ROOT).startsWith(query))
-                    .sorted()
-                    .limit(48)
-                    .forEach(suggestions::add);
-            return suggestions;
-        }
-
-        if (name.equals("sellchest") && args.length == 1) {
-            return List.of("create", "remove", "status");
-        }
-
-        if (name.equals("cweconomy") && args.length == 1) {
-            return List.of("reload", "status", "stats", "audit", "market", "resetmarket", "maintenance", "block", "unblock");
-        }
-
-        if (name.equals("cweconomy") && args.length == 2
-                && args[0].equalsIgnoreCase("history")) {
-            List<String> suggestions = new ArrayList<>(List.of("all"));
-            Bukkit.getOnlinePlayers().stream()
-                    .map(Player::getName)
-                    .sorted()
-                    .forEach(suggestions::add);
-            return suggestions;
-        }
-
-        if (name.equals("cweconomy") && args.length == 3
-                && args[0].equalsIgnoreCase("history")) {
-            return List.of("1", "2", "3", "4", "5");
-        }
-
-        if (name.equals("cweconomy") && args.length == 2
-                && (args[0].equalsIgnoreCase("block") || args[0].equalsIgnoreCase("unblock"))) {
-            return prices.keySet().stream().map(Enum::name).sorted().limit(100).toList();
-        }
-
-        if (name.equals("cweconomy") && args.length == 2
-                && args[0].equalsIgnoreCase("maintenance")) {
-            return List.of("on", "off", "block", "unblock", "status");
-        }
-
-        if (name.equals("cweconomy") && args.length == 2
-                && (args[0].equalsIgnoreCase("market") || args[0].equalsIgnoreCase("resetmarket"))) {
-            return Bukkit.getOnlinePlayers().stream().map(Player::getName).sorted().toList();
-        }
-
-        if (name.equals("cweconomy") && args.length == 3
-                && (args[0].equalsIgnoreCase("market") || args[0].equalsIgnoreCase("resetmarket"))) {
-            String query = args[2].toUpperCase(Locale.ROOT);
-            return prices.keySet().stream().map(Enum::name)
-                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
-        }
-
-        return List.of();
-    }
-
-    private record HttpResult(int status, String body) {}
-}
