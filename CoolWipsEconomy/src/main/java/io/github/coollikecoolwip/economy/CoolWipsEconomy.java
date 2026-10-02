@@ -55,6 +55,8 @@ import java.util.regex.Pattern;
 public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor, TabCompleter, Listener {
     private static final Pattern BANK = Pattern.compile("\"bank\"\\s*:\\s*(-?\\d+)");
     private final Map<Material, BigDecimal> prices = new ConcurrentHashMap<>();
+    // Selling is blocked until prices.txt has been successfully loaded. No stale/partial prices may be sold.
+    private final AtomicBoolean pricesReady = new AtomicBoolean(false);
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
@@ -682,6 +684,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private MarketSale reserveMarketSale(UUID owner, Material material, int amount) {
+        if (!pricesReady.get()) return null;
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return null;
         if (isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) {
@@ -712,6 +715,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private Map<Material, MarketSale> reserveMarketBatch(UUID owner, Map<Material, Integer> amounts) {
+        if (!pricesReady.get()) return Collections.emptyMap();
         Map<Material, MarketSale> result = new LinkedHashMap<>();
         marketLock.lock();
         try {
@@ -1520,7 +1524,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void loadRemotePrices() {
-        // Sell prices are always sourced from the external prices.txt file.\n        // The JAR contains no authoritative sell-price table; if the remote file\n        // cannot be loaded, keep the last successfully loaded values rather than\n        // silently falling back to bundled/default prices.\n        loadRemoteSellFile(pricesUrl, "prices.txt", prices);\n    }
+        pricesReady.set(false);
+        prices.clear();
+        loadRemoteSellFile(pricesUrl, "prices.txt", prices);
+        if (prices.isEmpty()) {
+            getLogger().severe("prices.txt could not be loaded. Selling is disabled until prices.txt is available.");
+            pricesReady.set(false);
+        } else {
+            pricesReady.set(true);
+            getLogger().info("prices.txt loaded successfully. Selling enabled with " + prices.size() + " prices.");
+        }
+    }
 
     private void loadRemoteShop() {
         loadRemoteFile(shopUrl, "shop.txt", shopPrices);
@@ -2832,6 +2846,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
+        if (!pricesReady.get()) {
+            p.sendMessage("§cThat item cannot be sold right now because the sell prices could not be loaded.");
+            return;
+        }
+
         if (prices.get(material) == null) {
             p.sendMessage("§cThat item cannot be sold. Use /prices.");
             return;
@@ -4038,6 +4057,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             getLogger().severe("Rejected economy payout because it overflowed the long range.");
             return 0L;
         }
+    }
+
+    private boolean sellPricesReady(Player p) {
+        if (pricesReady.get()) return true;
+        p.sendMessage("§cThat item cannot be sold right now because the sell prices could not be loaded.");
+        return false;
     }
 
     private boolean cooldownReady(Player p) {
