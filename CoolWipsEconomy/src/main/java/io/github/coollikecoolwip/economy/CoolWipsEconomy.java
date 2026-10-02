@@ -1177,6 +1177,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private void economyAudit(CommandSender sender) {
+        sender.sendMessage("§6§lCoolWips Economy Audit §7— running checks...");
+        sender.sendMessage("§7Checking crafting safeguards, economy statistics, anomaly flags, and online balances.");
         int adjustments = validateCraftingEconomy();
         economyStatsLock.lock();
         try {
@@ -1187,7 +1189,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             sender.sendMessage("§7Crafting safeguards adjusted: §f" + adjustments + " sell prices");
             sender.sendMessage("§7Money created today: §a$" + money(economyStatsData.getLong("money_created", 0L)));
             sender.sendMessage("§7Money removed today: §c$" + money(economyStatsData.getLong("money_removed", 0L)));
-            sender.sendMessage("§7Anomaly flags today: §f" + (flags == null ? 0 : flags.getKeys(false).size()));
+            sender.sendMessage("§7Anomaly flags today: §f" + (flags == null ? 0 : flags.getKeys(false).size()));\n            sender.sendMessage("§7Sell prices loaded: §f" + prices.size() + " §7| Shop prices loaded: §f" + shopPrices.size());\n            sender.sendMessage("§7Market rules loaded: §f" + marketRules.size() + " §7| Ledger entries retained: §f" + economyLedgerLines);
             if (flags != null) {
                 for (String key : flags.getKeys(false)) {
                     sender.sendMessage("§cFLAG §f" + economyStatsData.getString("flags." + key, key));
@@ -1233,10 +1235,127 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 sender.sendMessage("§7Online verified accounts: §f" + balances.size());
                 sender.sendMessage("§7Online average balance: §f$" + money(average));
                 sender.sendMessage("§7Online median balance: §f$" + money(median));
-                sender.sendMessage("§7Online range: §f$" + money(minimum) + " — $" + money(maximum));
+                sender.sendMessage("§7Online range: §f$" + money(minimum) + " — $" + money(maximum));\n                sender.sendMessage("§aAudit complete. §7Use §f/cweco history all §7to inspect recent buys and sells.");
             });
         });
     }
+
+    private void economyAdminHistory(CommandSender sender, String[] args) {
+        String target = args.length >= 2 ? args[1] : "all";
+        int page = 1;
+        if (args.length >= 3) {
+            try {
+                page = Integer.parseInt(args[2]);
+            } catch (NumberFormatException e) {
+                sender.sendMessage("§cPage must be a number.");
+                return;
+            }
+            if (page < 1) {
+                sender.sendMessage("§cPage must be at least 1.");
+                return;
+            }
+        }
+
+        final int requestedPage = page;
+        final String requestedTarget = target;
+        sender.sendMessage("§7Loading economy activity" +
+                (requestedTarget.equalsIgnoreCase("all") ? "" : " for §f" + requestedTarget) + "§7...");
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            List<String> lines = new ArrayList<>();
+            economyLedgerLock.lock();
+            try {
+                if (economyLedgerFile != null && economyLedgerFile.exists()) {
+                    try {
+                        lines.addAll(java.nio.file.Files.readAllLines(
+                                economyLedgerFile.toPath(), StandardCharsets.UTF_8));
+                    } catch (IOException e) {
+                        getLogger().warning("Could not read economy ledger for admin history: " + e.getMessage());
+                    }
+                }
+                lines.addAll(economyLedgerQueue);
+            } finally {
+                economyLedgerLock.unlock();
+            }
+
+            List<AdminLedgerEntry> entries = new ArrayList<>();
+            String targetUuid = null;
+            if (!requestedTarget.equalsIgnoreCase("all")) {
+                Player online = Bukkit.getPlayerExact(requestedTarget);
+                if (online != null) targetUuid = online.getUniqueId().toString();
+            }
+
+            for (String line : lines) {
+                String[] parts = line.split("\\|", -1);
+                if (parts.length < 8) continue;
+                String type = parts[3];
+                String item = parts[5];
+                if ("-".equals(item) || (!"CREATE".equals(type) && !"REMOVE".equals(type))) continue;
+
+                if (!requestedTarget.equalsIgnoreCase("all")) {
+                    boolean uuidMatches = targetUuid != null && targetUuid.equalsIgnoreCase(parts[1]);
+                    boolean nameMatches = parts[2].equalsIgnoreCase(requestedTarget);
+                    if (!uuidMatches && !nameMatches) continue;
+                }
+
+                try {
+                    long timestamp = Long.parseLong(parts[0]);
+                    int amount = Integer.parseInt(parts[6]);
+                    long money = Long.parseLong(parts[7]);
+                    entries.add(new AdminLedgerEntry(timestamp, parts[1], parts[2], type, parts[4], item, amount, money));
+                } catch (NumberFormatException ignored) {
+                    // Ignore malformed ledger entries rather than failing the admin view.
+                }
+            }
+
+            entries.sort(Comparator.comparingLong(AdminLedgerEntry::timestamp).reversed());
+            int totalPages = Math.max(1, (entries.size() + 9) / 10);
+            int safePage = Math.min(requestedPage, totalPages);
+            int start = (safePage - 1) * 10;
+            int end = Math.min(start + 10, entries.size());
+            List<AdminLedgerEntry> pageEntries = start >= entries.size()
+                    ? List.of() : entries.subList(start, end);
+
+            int finalTotalPages = totalPages;
+            int finalPage = safePage;
+            Bukkit.getScheduler().runTask(this, () -> {
+                sender.sendMessage("§6§lCoolWips Economy Activity §7(Page " + finalPage + "/" + finalTotalPages + ")");
+                sender.sendMessage("§7Filter: §f" + requestedTarget + " §7| Records: §f" + entries.size());
+
+                if (pageEntries.isEmpty()) {
+                    sender.sendMessage("§7No buy/sell activity was found.");
+                    if (requestedPage > finalTotalPages) {
+                        sender.sendMessage("§7Showing the last available page.");
+                    }
+                    return;
+                }
+
+                for (AdminLedgerEntry entry : pageEntries) {
+                    Material material = Material.matchMaterial(entry.item());
+                    String action = "CREATE".equals(entry.type()) ? "SOLD" : "BOUGHT";
+                    String moneyText = "CREATE".equals(entry.type())
+                            ? "§a+$" + money(entry.money())
+                            : "§c-$" + money(entry.money());
+                    String playerText = entry.playerName() == null || entry.playerName().isBlank()
+                            ? entry.uuid() : entry.playerName();
+                    sender.sendMessage("§7" + action + " §f" + playerText
+                            + " §7— §f" + entry.amount() + "x "
+                            + (material == null ? entry.item() : pretty(material))
+                            + " §7for " + moneyText
+                            + " §8(" + entry.category() + ")");
+                }
+
+                if (requestedPage > finalTotalPages) {
+                    sender.sendMessage("§7Use §f/cweco history " + requestedTarget + " " + finalTotalPages
+                            + " §7to view the last page.");
+                }
+            });
+        });
+    }
+
+    private record AdminLedgerEntry(long timestamp, String uuid, String playerName,
+                                    String type, String category, String item,
+                                    int amount, long money) {}
 
     private int validateCraftingEconomy() {
         if (prices.isEmpty()) return 0;
@@ -1992,6 +2111,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 if (args[0].equalsIgnoreCase("stats")) {
                     economyStats(sender);
+                    return true;
+                }
+
+                if (args[0].equalsIgnoreCase("history")) {
+                    economyAdminHistory(sender, args);
                     return true;
                 }
 
