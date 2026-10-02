@@ -3902,3 +3902,4 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         p.getInventory().setStorageContents(before);
         return false;
     }
+}
