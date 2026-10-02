@@ -283,7 +283,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (m != null) maintenanceBlocks.add(m);
         }
 
-        // Sell prices are authoritative from the configured prices.txt source.
+        // Sell prices are authoritative from the configured external prices.txt source; rebuild this plugin when code changes are made.
         // Never seed the live sell-price map from config.yml: doing so can allow
         // a stale/local fallback price to be used before the remote file loads.
         prices.clear();
