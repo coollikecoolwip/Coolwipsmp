@@ -2529,15 +2529,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             gross = gross.add(unit.multiply(BigDecimal.valueOf(stack.getAmount())));
         }
 
-        BigDecimal payout = afterTax(gross, sellTax);
+        long payout = afterTax(gross, sellTax);
 
         player.sendMessage("§6§lSELL CHEST STATUS");
         player.sendMessage("§7Owner: §f" + ownerName);
         player.sendMessage("§7Location: §f" + block.getWorld().getName() + " "
                 + block.getX() + ", " + block.getY() + ", " + block.getZ());
         player.sendMessage("§7Sellable items inside: §f" + sellableItems);
-        player.sendMessage("§7Current value: §a$" + money(gross) + " §7before tax");
-        player.sendMessage("§7Generates: §a$" + money(payout) + " §7after " + sellTax.multiply(BigDecimal.valueOf(100)) + "% tax");
+        player.sendMessage("§7Current value: §a$" + moneyDecimal(gross) + " §7before tax");
+        player.sendMessage("§7Generates: §a$" + money(payout) + " §7after " + String.format(Locale.US, "%.1f", sellTax * 100.0) + "% tax");
         player.sendMessage("§7Made for owner: §a$" + money(sellChestEarnings(block)));
     }
 
@@ -4074,6 +4074,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private String money(long value) {
         return String.format(Locale.US, "%,d", value);
+    }
+
+    private String moneyDecimal(BigDecimal value) {
+        if (value == null) return "0.00";
+        return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
     }
 
     private void cleanupExpiredPendingState() {
