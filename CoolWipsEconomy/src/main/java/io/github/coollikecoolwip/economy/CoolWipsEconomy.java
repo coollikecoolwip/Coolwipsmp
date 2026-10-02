@@ -77,7 +77,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private int confirmationSeconds;
     private double sellTax, buyTax;
     private long minimumBounty, maximumBounty;
-    private NamespacedKey sellChestOwnerKey;
+    private NamespacedKey sellChestOwnerKey, sellChestEarnedKey;
     private final Map<String, ReentrantLock> sellChestLocks = new ConcurrentHashMap<>();
     private final Set<String> pendingAutomaticSellChests = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> automaticSellChestCooldowns = new ConcurrentHashMap<>();
@@ -199,6 +199,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadSettings();
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
         sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
+        sellChestEarnedKey = new NamespacedKey(this, "sell-chest-earned");
         loadBundledMarketRules();
         loadMarketLedger();
         loadEconomyStats();
@@ -2472,6 +2473,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     lock.unlock();
                     return;
                 }
+                addSellChestEarnings(inventory, finalPayout);
                 String chestSellerName = Bukkit.getOfflinePlayer(info.owner()).getName();
                 for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
                     MarketSale sale = marketSales.get(entry.getKey());
@@ -2536,6 +2538,31 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         player.sendMessage("§7Sellable items inside: §f" + sellableItems);
         player.sendMessage("§7Current value: §a$" + money(gross) + " §7before tax");
         player.sendMessage("§7Generates: §a$" + money(payout) + " §7after " + sellTax.multiply(BigDecimal.valueOf(100)) + "% tax");
+        player.sendMessage("§7Made for owner: §a$" + money(sellChestEarnings(block)));
+    }
+
+    private long sellChestEarnings(Block block) {
+        if (!(block.getState() instanceof Chest chest)) return 0L;
+        return Math.max(0L, chest.getPersistentDataContainer().getOrDefault(sellChestEarnedKey, PersistentDataType.LONG, 0L));
+    }
+
+    private void addSellChestEarnings(Inventory inventory, long payout) {
+        if (payout <= 0) return;
+        InventoryHolder holder = inventory.getHolder();
+        if (holder instanceof Chest chest) {
+            addSellChestEarnings(chest.getBlock(), payout);
+        } else if (holder instanceof DoubleChest doubleChest) {
+            InventoryHolder left = doubleChest.getLeftSide();
+            if (left instanceof Chest leftChest) addSellChestEarnings(leftChest.getBlock(), payout);
+        }
+    }
+
+    private void addSellChestEarnings(Block block, long payout) {
+        if (!(block.getState() instanceof Chest chest)) return;
+        long current = Math.max(0L, chest.getPersistentDataContainer().getOrDefault(sellChestEarnedKey, PersistentDataType.LONG, 0L));
+        long updated = current > Long.MAX_VALUE - payout ? Long.MAX_VALUE : current + payout;
+        chest.getPersistentDataContainer().set(sellChestEarnedKey, PersistentDataType.LONG, updated);
+        chest.update(true, false);
     }
 
     private boolean isChestBlock(Block block) {
@@ -2556,11 +2583,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private void markSellChest(Block block, UUID owner) {
         if (!(block.getState() instanceof Chest chest)) return;
         chest.getPersistentDataContainer().set(sellChestOwnerKey, PersistentDataType.STRING, owner.toString());
+        chest.getPersistentDataContainer().set(sellChestEarnedKey, PersistentDataType.LONG, 0L);
         chest.update(true, false);
 
         Block other = adjacentChest(block);
         if (other != null && other.getState() instanceof Chest otherChest) {
             otherChest.getPersistentDataContainer().set(sellChestOwnerKey, PersistentDataType.STRING, owner.toString());
+            otherChest.getPersistentDataContainer().set(sellChestEarnedKey, PersistentDataType.LONG, 0L);
             otherChest.update(true, false);
         }
     }
