@@ -33,7 +33,8 @@ import java.util.stream.Collectors;
 
 public final class CoolWipsProgression extends JavaPlugin implements Listener, CommandExecutor, TabCompleter {
     private static final List<String> GATES = List.of(
-            "diamonds", "nether", "netherite", "end", "elytra", "shulker", "totems", "tridents"
+            "iron", "copper", "gold", "redstone", "lapis", "emerald", "diamonds",
+            "nether", "netherite", "end", "enchanting", "brewing", "elytra", "shulker", "totems", "tridents"
     );
 
     private final EnumMap<Gate, Boolean> gates = new EnumMap<>(Gate.class);
@@ -89,9 +90,13 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     }
 
     private Gate gateForItem(Material type) {
-        if (type == Material.DIAMOND || type == Material.DIAMOND_BLOCK || isDiamondEquipment(type)) {
-            return Gate.DIAMONDS;
-        }
+        if (type == Material.IRON_INGOT || type == Material.IRON_NUGGET || type == Material.IRON_BLOCK || isIronEquipment(type)) return Gate.IRON;
+        if (type == Material.COPPER_INGOT || type == Material.RAW_COPPER || type == Material.COPPER_BLOCK || type.name().startsWith("COPPER_")) return Gate.COPPER;
+        if (type == Material.GOLD_INGOT || type == Material.GOLD_NUGGET || type == Material.GOLD_BLOCK || isGoldEquipment(type)) return Gate.GOLD;
+        if (type == Material.REDSTONE || type == Material.REDSTONE_BLOCK || type == Material.REDSTONE_TORCH) return Gate.REDSTONE;
+        if (type == Material.LAPIS_LAZULI || type == Material.LAPIS_BLOCK) return Gate.LAPIS;
+        if (type == Material.EMERALD || type == Material.EMERALD_BLOCK) return Gate.EMERALD;
+        if (type == Material.DIAMOND || type == Material.DIAMOND_BLOCK || isDiamondEquipment(type)) return Gate.DIAMONDS;
         if (type == Material.NETHERITE_INGOT || type == Material.NETHERITE_SCRAP ||
                 type == Material.NETHERITE_BLOCK || isNetheriteEquipment(type)) {
             return Gate.NETHERITE;
@@ -101,6 +106,22 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         if (type == Material.TOTEM_OF_UNDYING) return Gate.TOTEMS;
         if (type == Material.TRIDENT) return Gate.TRIDENTS;
         return null;
+    }
+
+    private boolean isIronEquipment(Material m) {
+        return switch (m) {
+            case IRON_SWORD, IRON_PICKAXE, IRON_AXE, IRON_SHOVEL, IRON_HOE,
+                 IRON_HELMET, IRON_CHESTPLATE, IRON_LEGGINGS, IRON_BOOTS -> true;
+            default -> false;
+        };
+    }
+
+    private boolean isGoldEquipment(Material m) {
+        return switch (m) {
+            case GOLDEN_SWORD, GOLDEN_PICKAXE, GOLDEN_AXE, GOLDEN_SHOVEL, GOLDEN_HOE,
+                 GOLDEN_HELMET, GOLDEN_CHESTPLATE, GOLDEN_LEGGINGS, GOLDEN_BOOTS -> true;
+            default -> false;
+        };
     }
 
     private boolean isDiamondEquipment(Material m) {
@@ -123,6 +144,13 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     public void onBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
         Material type = event.getBlock().getType();
+
+        if (isIronOre(type) && locked(player, Gate.IRON)) { event.setCancelled(true); return; }
+        if (isCopperOre(type) && locked(player, Gate.COPPER)) { event.setCancelled(true); return; }
+        if (isGoldOre(type) && locked(player, Gate.GOLD)) { event.setCancelled(true); return; }
+        if (isRedstoneOre(type) && locked(player, Gate.REDSTONE)) { event.setCancelled(true); return; }
+        if (isLapisOre(type) && locked(player, Gate.LAPIS)) { event.setCancelled(true); return; }
+        if (isEmeraldOre(type) && locked(player, Gate.EMERALD)) { event.setCancelled(true); return; }
 
         if (type == Material.DIAMOND_ORE || type == Material.DEEPSLATE_DIAMOND_ORE) {
             if (locked(player, Gate.DIAMONDS)) event.setCancelled(true);
@@ -173,6 +201,13 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         }
     }
 
+    private boolean isIronOre(Material m) { return m == Material.IRON_ORE || m == Material.DEEPSLATE_IRON_ORE; }
+    private boolean isCopperOre(Material m) { return m == Material.COPPER_ORE || m == Material.DEEPSLATE_COPPER_ORE; }
+    private boolean isGoldOre(Material m) { return m == Material.GOLD_ORE || m == Material.DEEPSLATE_GOLD_ORE; }
+    private boolean isRedstoneOre(Material m) { return m == Material.REDSTONE_ORE || m == Material.DEEPSLATE_REDSTONE_ORE; }
+    private boolean isLapisOre(Material m) { return m == Material.LAPIS_ORE || m == Material.DEEPSLATE_LAPIS_ORE; }
+    private boolean isEmeraldOre(Material m) { return m == Material.EMERALD_ORE || m == Material.DEEPSLATE_EMERALD_ORE; }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInteract(PlayerInteractEvent event) {
         Player player = event.getPlayer();
@@ -184,6 +219,12 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 event.setCancelled(true);
                 return;
             }
+        }
+
+        if (event.getAction().isRightClick() && event.getClickedBlock() != null) {
+            Material clicked = event.getClickedBlock().getType();
+            if (clicked == Material.ENCHANTING_TABLE && locked(player, Gate.ENCHANTING)) { event.setCancelled(true); return; }
+            if (clicked == Material.BREWING_STAND && locked(player, Gate.BREWING)) { event.setCancelled(true); return; }
         }
 
         if (event.getAction().isRightClick()
@@ -365,7 +406,15 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         ELYTRA("elytra", "Elytra"),
         SHULKER("shulker", "Shulker"),
         TOTEMS("totems", "Totems", "totem"),
-        TRIDENTS("tridents", "Tridents", "trident");
+        TRIDENTS("tridents", "Tridents", "trident"),
+        IRON("iron", "Iron"),
+        COPPER("copper", "Copper"),
+        GOLD("gold", "Gold"),
+        REDSTONE("redstone", "Redstone"),
+        LAPIS("lapis", "Lapis Lazuli", "lapis_lazuli"),
+        EMERALD("emerald", "Emerald"),
+        ENCHANTING("enchanting", "Enchanting"),
+        BREWING("brewing", "Brewing");
 
         final String key;
         final String display;
