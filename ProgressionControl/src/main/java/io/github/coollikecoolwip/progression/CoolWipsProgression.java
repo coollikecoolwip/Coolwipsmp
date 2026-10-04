@@ -25,7 +25,7 @@ import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.SlotType;
+import org.bukkit.event.inventory.InventoryType.SlotType;
 import org.bukkit.plugin.java.JavaPlugin;
 
 import java.util.*;
