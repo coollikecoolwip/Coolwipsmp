@@ -1,0 +1,20 @@
+name: CoolWipsProgression
+version: 1.0.0
+main: io.github.coollikecoolwip.progression.CoolWipsProgression
+api-version: '1.21'
+description: Manual server-wide progression gates for CoolWips SMP.
+author: coollikecoolwip
+
+commands:
+  progression:
+    description: Manage CoolWips progression gates.
+    usage: /progression <status|unlock|lock|reload>
+    aliases: [prog]
+
+permissions:
+  coolwipsprogression.admin:
+    description: Manage progression gates.
+    default: op
+  coolwipsprogression.bypass:
+    description: Bypass all progression gates.
+    default: false
