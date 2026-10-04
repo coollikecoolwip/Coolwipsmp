@@ -1,0 +1,17 @@
+# CoolWips Progression Control
+# All progression gates start LOCKED. Unlock them manually with /progression unlock <gate>.
+
+gates:
+  diamonds: false
+  nether: false
+  netherite: false
+  end: false
+  elytra: false
+  shulker: false
+  totems: false
+  tridents: false
+
+messages:
+  locked: "&cProgression locked: &f{gate}&c. An admin has not unlocked it yet."
+  dimension-locked: "&cThe {gate} is not unlocked yet."
+  item-locked: "&c{gate} progression is not unlocked yet."
