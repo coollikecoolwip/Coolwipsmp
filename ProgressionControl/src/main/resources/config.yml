@@ -1,5 +1,12 @@
-# CoolWips Progression Control
-# All progression gates start LOCKED. Unlock them manually with /progression unlock <gate>.
+# CoolWips Progression Control 1.1.0
+# Every gate is LOCKED by default.
+# Use /progression unlock <gate> to open a stage for normal players.
+# Unlock state is saved here and survives restarts.
+#
+# Suggested progression order:
+# iron -> copper -> gold -> redstone -> lapis -> emerald -> diamonds
+# -> nether -> netherite -> enchanting -> brewing -> end
+# -> elytra -> shulker -> totems -> tridents
 
 gates:
   iron: false
@@ -9,15 +16,17 @@ gates:
   lapis: false
   emerald: false
   diamonds: false
+
   nether: false
   netherite: false
+  enchanting: false
+  brewing: false
   end: false
+
   elytra: false
   shulker: false
   totems: false
   tridents: false
-  enchanting: false
-  brewing: false
 
 messages:
   locked: "&cProgression locked: &f{gate}&c. An admin has not unlocked it yet."
