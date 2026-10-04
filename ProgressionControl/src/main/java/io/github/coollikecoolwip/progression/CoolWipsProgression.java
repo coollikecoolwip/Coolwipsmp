@@ -90,9 +90,9 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     }
 
     private Gate gateForItem(Material type) {
-        if (type == Material.IRON_INGOT || type == Material.IRON_NUGGET || type == Material.IRON_BLOCK || isIronEquipment(type)) return Gate.IRON;
+        if (type == Material.IRON_INGOT || type == Material.IRON_NUGGET || type == Material.RAW_IRON || type == Material.IRON_BLOCK || isIronEquipment(type)) return Gate.IRON;
         if (type == Material.COPPER_INGOT || type == Material.RAW_COPPER || type == Material.COPPER_BLOCK || type.name().startsWith("COPPER_")) return Gate.COPPER;
-        if (type == Material.GOLD_INGOT || type == Material.GOLD_NUGGET || type == Material.GOLD_BLOCK || isGoldEquipment(type)) return Gate.GOLD;
+        if (type == Material.GOLD_INGOT || type == Material.GOLD_NUGGET || type == Material.RAW_GOLD || type == Material.GOLD_BLOCK || isGoldEquipment(type)) return Gate.GOLD;
         if (type == Material.REDSTONE || type == Material.REDSTONE_BLOCK || type == Material.REDSTONE_TORCH) return Gate.REDSTONE;
         if (type == Material.LAPIS_LAZULI || type == Material.LAPIS_BLOCK) return Gate.LAPIS;
         if (type == Material.EMERALD || type == Material.EMERALD_BLOCK) return Gate.EMERALD;
