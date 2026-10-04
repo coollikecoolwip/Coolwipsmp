@@ -2,6 +2,12 @@
 # All progression gates start LOCKED. Unlock them manually with /progression unlock <gate>.
 
 gates:
+  iron: false
+  copper: false
+  gold: false
+  redstone: false
+  lapis: false
+  emerald: false
   diamonds: false
   nether: false
   netherite: false
@@ -10,6 +16,8 @@ gates:
   shulker: false
   totems: false
   tridents: false
+  enchanting: false
+  brewing: false
 
 messages:
   locked: "&cProgression locked: &f{gate}&c. An admin has not unlocked it yet."
