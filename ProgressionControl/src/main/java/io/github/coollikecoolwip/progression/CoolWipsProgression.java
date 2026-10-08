@@ -33,6 +33,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.event.inventory.InventoryType.SlotType;
@@ -360,6 +361,19 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 && event.getClickedBlock() != null
                 && event.getClickedBlock().getType() == Material.END_PORTAL_FRAME
                 && locked(player, Gate.END)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onElytraGlide(EntityToggleGlideEvent event) {
+        if (!(event.getEntity() instanceof Player player)) return;
+        if (!event.isGliding()) return;
+
+        ItemStack chestplate = player.getInventory().getChestplate();
+        if (chestplate != null
+                && chestplate.getType() == Material.ELYTRA
+                && locked(player, Gate.ELYTRA)) {
             event.setCancelled(true);
         }
     }
