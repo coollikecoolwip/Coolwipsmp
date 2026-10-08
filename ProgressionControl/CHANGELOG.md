@@ -2,6 +2,14 @@
 
 All notable changes to CoolWipsProgression are documented here.
 
+## 1.1.1
+
+- Fixed locked Elytra flight after chestplate-to-Elytra swaps and other equip bypasses.
+- Added a movement-level failsafe that immediately stops gliding when the Elytra gate is locked.
+- Added Shulker Box placement, opening, breaking, dispenser, and automation restrictions.
+- Hardened armor swap and inventory handling.
+
+
 ## 1.1.0
 
 - Expanded progression from late-game-only gates to a full resource progression system.
