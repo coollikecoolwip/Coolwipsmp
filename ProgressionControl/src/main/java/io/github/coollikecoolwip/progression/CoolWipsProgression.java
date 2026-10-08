@@ -31,6 +31,7 @@ import org.bukkit.event.inventory.PrepareSmithingEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
+import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
@@ -157,6 +158,10 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 || type == Material.GOLDEN_HELMET || type == Material.GOLDEN_CHESTPLATE || type == Material.GOLDEN_LEGGINGS || type == Material.GOLDEN_BOOTS
                 || type == Material.DIAMOND_HELMET || type == Material.DIAMOND_CHESTPLATE || type == Material.DIAMOND_LEGGINGS || type == Material.DIAMOND_BOOTS
                 || type == Material.NETHERITE_HELMET || type == Material.NETHERITE_CHESTPLATE || type == Material.NETHERITE_LEGGINGS || type == Material.NETHERITE_BOOTS;
+    }
+
+    private boolean elytraLocked(Player player) {
+        return !unlocked(Gate.ELYTRA) && !bypass(player);
     }
 
     private boolean lockedArmor(Player player, ItemStack item) {
@@ -368,13 +373,23 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onElytraGlide(EntityToggleGlideEvent event) {
         if (!(event.getEntity() instanceof Player player)) return;
-        if (!event.isGliding()) return;
+        if (!event.isGliding() || !elytraLocked(player)) return;
 
         ItemStack chestplate = player.getInventory().getChestplate();
-        if (chestplate != null
-                && chestplate.getType() == Material.ELYTRA
-                && locked(player, Gate.ELYTRA)) {
+        if (chestplate != null && chestplate.getType() == Material.ELYTRA) {
             event.setCancelled(true);
+            deny(player, Gate.ELYTRA);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onElytraMove(PlayerMoveEvent event) {
+        Player player = event.getPlayer();
+        if (!player.isGliding() || !elytraLocked(player)) return;
+
+        ItemStack chestplate = player.getInventory().getChestplate();
+        if (chestplate != null && chestplate.getType() == Material.ELYTRA) {
+            player.setGliding(false);
         }
     }
 
