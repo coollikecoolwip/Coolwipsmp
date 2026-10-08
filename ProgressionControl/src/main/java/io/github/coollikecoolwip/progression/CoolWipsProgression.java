@@ -84,6 +84,35 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         gates.put(Gate.ELYTRA, false);
     }
 
+    private void enforceDimensionBan(Player player) {
+        if (bypass(player)) return;
+
+        World.Environment environment = player.getWorld().getEnvironment();
+        Gate gate = switch (environment) {
+            case NETHER -> Gate.NETHER;
+            case THE_END -> Gate.END;
+            default -> null;
+        };
+
+        if (gate == null || unlocked(gate)) return;
+
+        if (player.isInsideVehicle()) {
+            player.leaveVehicle();
+        }
+
+        Location safe = findSafeOverworld(player.getLocation());
+        player.teleport(safe);
+        deny(player, gate);
+    }
+
+    private boolean destinationIsLockedDimension(Location destination, Gate gate) {
+        if (destination == null || destination.getWorld() == null) return false;
+
+        World.Environment environment = destination.getWorld().getEnvironment();
+        return (gate == Gate.NETHER && environment == World.Environment.NETHER)
+                || (gate == Gate.END && environment == World.Environment.THE_END);
+    }
+
     private boolean unlocked(Gate gate) {
         return gates.getOrDefault(gate, false);
     }

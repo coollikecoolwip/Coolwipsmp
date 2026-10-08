@@ -4,7 +4,7 @@
   <modelVersion>4.0.0</modelVersion>
   <groupId>io.github.coollikecoolwip</groupId>
   <artifactId>coolwips-progression-control</artifactId>
-  <version>1.1.4</version>
+  <version>1.1.5</version>
   <name>CoolWips Progression Control</name>
   <properties>
     <maven.compiler.release>25</maven.compiler.release>

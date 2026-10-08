@@ -2,6 +2,12 @@
 
 All notable changes to CoolWipsProgression are documented here.
 
+## 1.1.5
+
+- Fixed the 1.1.4 compile failure by adding the missing dimension safety helper methods.
+- Keeps the repeating locked-dimension safety sweep active for every online player.
+- Keeps player, vehicle/entity portal, portal creation, and respawn protections for locked dimensions.
+
 ## 1.1.4
 
 - Hardened Nether and End protection against entity/vehicle portal travel.
@@ -55,4 +61,5 @@ All notable changes to CoolWipsProgression are documented here.
 - Added manual lock/unlock commands.
 - Added configurable persistent progression gates.
 - Added admin and bypass permissions.
+
 

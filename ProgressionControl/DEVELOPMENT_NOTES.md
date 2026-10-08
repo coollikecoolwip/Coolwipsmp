@@ -1,11 +1,11 @@
 # CoolWipsProgression Development Notes
 
-Current version: 1.1.4
+Current version: 1.1.5
 
 ## Versioning rule
 
 Every bug fix increments the patch version by 1:
-1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3 -> 1.1.4 -> 1.1.4
+1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3 -> 1.1.4 -> 1.1.5 -> 1.1.4
 
 Keep the version synchronized in:
 - ProgressionControl/pom.xml
