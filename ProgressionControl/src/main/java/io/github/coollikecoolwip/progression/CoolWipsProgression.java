@@ -19,6 +19,7 @@ import org.bukkit.event.block.BlockDispenseArmorEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
@@ -240,8 +241,15 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
             int hotbarButton = event.getHotbarButton();
             if (hotbarButton >= 0 && hotbarButton < 9) {
                 ItemStack hotbarItem = event.getWhoClicked().getInventory().getItem(hotbarButton);
-                return hotbarItem != null && hotbarItem.getType() != Material.AIR && isGatedArmor(hotbarItem.getType());
+                if (hotbarItem != null && hotbarItem.getType() != Material.AIR && isGatedArmor(hotbarItem.getType())) {
+                    return true;
+                }
             }
+        }
+
+        if (event.getClick() == ClickType.SWAP_OFFHAND) {
+            ItemStack offhand = event.getWhoClicked().getInventory().getItemInOffHand();
+            return offhand != null && offhand.getType() != Material.AIR && isGatedArmor(offhand.getType());
         }
 
         return false;
@@ -259,6 +267,8 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 if (hotbarButton >= 0 && hotbarButton < 9) {
                     incoming = player.getInventory().getItem(hotbarButton);
                 }
+            } else if (event.getClick() == ClickType.SWAP_OFFHAND) {
+                incoming = player.getInventory().getItemInOffHand();
             }
 
             if (lockedArmor(player, incoming)) {
