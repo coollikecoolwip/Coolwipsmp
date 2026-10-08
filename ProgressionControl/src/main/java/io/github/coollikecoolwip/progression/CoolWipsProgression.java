@@ -33,7 +33,10 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
+import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.event.world.PortalCreateEvent;
+import org.bukkit.event.entity.EntityPortalEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -59,7 +62,10 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
         // Elytra is permanently disabled on CoolWips SMP. This safety sweep also
         // catches direct inventory changes made by commands or other plugins.
-        getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(this::enforceElytraBan), 1L, 1L);
+        getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(player -> {
+            enforceElytraBan(player);
+            enforceDimensionBan(player);
+        }), 1L, 1L);
 
         Objects.requireNonNull(getCommand("progression")).setExecutor(this);
         Objects.requireNonNull(getCommand("progression")).setTabCompleter(this);
@@ -473,6 +479,46 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 || event.getCause() == BlockIgniteEvent.IgniteCause.FIREBALL) {
             event.setCancelled(true);
             deny(player, Gate.NETHER);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPortalEntity(EntityPortalEvent event) {
+        Location destination = event.getTo();
+        if (destination == null || destination.getWorld() == null) return;
+
+        World.Environment environment = destination.getWorld().getEnvironment();
+
+        if (environment == World.Environment.NETHER && !unlocked(Gate.NETHER)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (environment == World.Environment.THE_END && !unlocked(Gate.END)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onPortalCreate(PortalCreateEvent event) {
+        if (unlocked(Gate.NETHER)) return;
+
+        PortalCreateEvent.CreateReason reason = event.getReason();
+        if (reason == PortalCreateEvent.CreateReason.FIRE
+                || reason == PortalCreateEvent.CreateReason.NETHER_PAIR) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onRespawn(PlayerRespawnEvent event) {
+        Player player = event.getPlayer();
+        if (bypass(player)) return;
+
+        Location respawn = event.getRespawnLocation();
+        if (destinationIsLockedDimension(respawn, Gate.NETHER)
+                || destinationIsLockedDimension(respawn, Gate.END)) {
+            event.setRespawnLocation(findSafeOverworld(respawn));
         }
     }
 

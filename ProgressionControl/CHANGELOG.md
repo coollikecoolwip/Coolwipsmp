@@ -2,6 +2,14 @@
 
 All notable changes to CoolWipsProgression are documented here.
 
+## 1.1.4
+
+- Hardened Nether and End protection against entity/vehicle portal travel.
+- Boats and other non-player entities cannot enter locked Nether/End dimensions through portals.
+- Nether portal creation and Nether portal pairing are blocked while the Nether gate is locked.
+- Locked Nether/End respawn destinations are redirected to the overworld.
+- Added a repeating dimension safety sweep that teleports normal players out of locked Nether/End worlds, catching direct/plugin-injected world changes and event bypasses.
+
 ## 1.1.3
 
 - Fixed the GitHub Actions compile failure caused by passing a Player method reference directly to runTaskTimer.
@@ -47,3 +55,4 @@ All notable changes to CoolWipsProgression are documented here.
 - Added manual lock/unlock commands.
 - Added configurable persistent progression gates.
 - Added admin and bypass permissions.
+

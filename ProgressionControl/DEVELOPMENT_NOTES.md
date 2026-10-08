@@ -1,11 +1,11 @@
 # CoolWipsProgression Development Notes
 
-Current version: 1.1.3
+Current version: 1.1.4
 
 ## Versioning rule
 
 Every bug fix increments the patch version by 1:
-1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3 -> 1.1.4
+1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3 -> 1.1.4 -> 1.1.4
 
 Keep the version synchronized in:
 - ProgressionControl/pom.xml
@@ -35,6 +35,14 @@ Elytra:
 - EntityToggleGlideEvent always blocks starting Elytra gliding.
 - PlayerMoveEvent immediately stops any active glide.
 - A repeating server-side safety sweep checks every online player every tick and removes Elytras from chest slots inserted by commands or other plugins.
+
+Dimensions:
+- Player teleport into locked Nether/End is blocked.
+- Player portal travel into locked Nether/End is blocked by the player teleport layer.
+- Non-player portal entities, including boats carrying players, cannot enter locked Nether/End.
+- Nether portal creation and Nether portal pairing are blocked while Nether is locked.
+- Respawn locations inside locked Nether/End are redirected to the overworld.
+- A repeating server-side safety sweep checks every online player every tick and immediately teleports players out of locked Nether/End worlds, including direct/plugin-injected world changes.
 
 Shulker:
 - Shulker shells and Shulker boxes are gated.

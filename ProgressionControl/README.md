@@ -1,6 +1,6 @@
 # CoolWips Progression Control
 
-**CoolWipsProgression 1.1.3** is a standalone Paper plugin for CoolWips SMP that lets server staff manually control the server's survival progression.
+**CoolWipsProgression 1.1.4** is a standalone Paper plugin for CoolWips SMP that lets server staff manually control the server's survival progression.
 
 Every gate starts **locked** until an admin unlocks it. Unlocks are stored in the plugin configuration and survive server restarts.
 
@@ -179,7 +179,7 @@ Other plugins or administrator commands can still place an Elytra in a player's 
 Copy:
 
 ```text
-CoolWipsProgression-1.1.3.jar
+CoolWipsProgression-1.1.4.jar
 ```
 
 into:
@@ -207,7 +207,7 @@ mvn -B clean package
 The output is:
 
 ```text
-target/CoolWipsProgression-1.1.3.jar
+target/CoolWipsProgression-1.1.4.jar
 ```
 
 The repository also contains a GitHub Actions build workflow at:
@@ -225,4 +225,4 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Bug-fix versioning
 
-Each bug fix increments the patch version by 1 (for example, 1.1.0 -> 1.1.1 -> 1.1.3). The GitHub Actions build reads the Maven version automatically, uploads the matching JAR, and commits the built JAR to the root of `ProgressionControl/`.
+Each bug fix increments the patch version by 1 (for example, 1.1.0 -> 1.1.1 -> 1.1.4). The GitHub Actions build reads the Maven version automatically, uploads the matching JAR, and commits the built JAR to the root of `ProgressionControl/`.
