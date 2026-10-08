@@ -6,6 +6,7 @@ import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
+import org.bukkit.block.ShulkerBox;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -23,12 +24,15 @@ import org.bukkit.event.inventory.ClickType;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.InventoryDragEvent;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.event.inventory.InventoryOpenEvent;
 import org.bukkit.event.inventory.PrepareSmithingEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.event.player.PlayerItemConsumeEvent;
 import org.bukkit.event.player.PlayerPickupItemEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
+import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.event.inventory.InventoryType.SlotType;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -160,6 +164,14 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         return gate != null && locked(player, gate);
     }
 
+    private boolean isShulkerBox(Material type) {
+        return type != null && type.name().endsWith("_SHULKER_BOX");
+    }
+
+    private boolean isShulkerInventory(Inventory inventory) {
+        return inventory != null && inventory.getHolder() instanceof ShulkerBox;
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
@@ -178,6 +190,11 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         }
 
         if (type == Material.ANCIENT_DEBRIS && locked(player, Gate.NETHERITE)) {
+            event.setCancelled(true);
+            return;
+        }
+
+        if (isShulkerBox(type) && locked(player, Gate.SHULKER)) {
             event.setCancelled(true);
         }
     }
@@ -326,6 +343,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
         if (event.getAction().isRightClick() && event.getClickedBlock() != null) {
             Material clicked = event.getClickedBlock().getType();
+            if (isShulkerBox(clicked) && locked(player, Gate.SHULKER)) { event.setCancelled(true); return; }
             if (clicked == Material.ENCHANTING_TABLE && locked(player, Gate.ENCHANTING)) { event.setCancelled(true); return; }
             if (clicked == Material.BREWING_STAND && locked(player, Gate.BREWING)) { event.setCancelled(true); return; }
         }
@@ -334,6 +352,24 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 && event.getClickedBlock() != null
                 && event.getClickedBlock().getType() == Material.END_PORTAL_FRAME
                 && locked(player, Gate.END)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onShulkerOpen(InventoryOpenEvent event) {
+        if (!(event.getPlayer() instanceof Player player)) return;
+
+        if (isShulkerInventory(event.getInventory()) && locked(player, Gate.SHULKER)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onShulkerMove(InventoryMoveItemEvent event) {
+        if (unlocked(Gate.SHULKER)) return;
+
+        if (isShulkerInventory(event.getSource()) || isShulkerInventory(event.getDestination())) {
             event.setCancelled(true);
         }
     }
