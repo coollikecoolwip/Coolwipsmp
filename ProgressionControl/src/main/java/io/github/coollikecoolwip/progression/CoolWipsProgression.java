@@ -59,7 +59,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
         // Elytra is permanently disabled on CoolWips SMP. This safety sweep also
         // catches direct inventory changes made by commands or other plugins.
-        getServer().getScheduler().runTaskTimer(this, this::enforceElytraBan, 1L, 1L);
+        getServer().getScheduler().runTaskTimer(this, () -> getServer().getOnlinePlayers().forEach(this::enforceElytraBan), 1L, 1L);
 
         Objects.requireNonNull(getCommand("progression")).setExecutor(this);
         Objects.requireNonNull(getCommand("progression")).setTabCompleter(this);
@@ -75,6 +75,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         for (Gate gate : Gate.values()) {
             gates.put(gate, getConfig().getBoolean("gates." + gate.key, false));
         }
+        gates.put(Gate.ELYTRA, false);
     }
 
     private boolean unlocked(Gate gate) {
@@ -559,6 +560,13 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
             }
 
             boolean value = args[0].equalsIgnoreCase("unlock");
+            if (gate == Gate.ELYTRA && value) {
+                gates.put(Gate.ELYTRA, false);
+                getConfig().set("gates.elytra", false);
+                saveConfig();
+                sender.sendMessage(color("&cElytra is permanently disabled on this server and cannot be unlocked."));
+                return true;
+            }
             gates.put(gate, value);
             getConfig().set("gates." + gate.key, value);
             saveConfig();

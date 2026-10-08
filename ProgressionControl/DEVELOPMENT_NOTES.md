@@ -1,11 +1,11 @@
 # CoolWipsProgression Development Notes
 
-Current version: 1.1.2
+Current version: 1.1.3
 
 ## Versioning rule
 
 Every bug fix increments the patch version by 1:
-1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3
+1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3 -> 1.1.4
 
 Keep the version synchronized in:
 - ProgressionControl/pom.xml
@@ -28,9 +28,13 @@ Armor:
 - Dispenser armor equip
 
 Elytra:
-- Locked Elytra cannot be equipped through the protected inventory paths.
-- EntityToggleGlideEvent blocks starting Elytra gliding.
-- PlayerMoveEvent is a second failsafe that immediately stops gliding if the Elytra gate is locked, including cases where the Elytra was already equipped.
+- Elytra is permanently hard-disabled server-wide.
+- The Elytra gate is forcibly kept false during config loading and cannot be unlocked with /progression unlock elytra.
+- The bypass permission and creative/spectator modes cannot enable Elytra.
+- Pickup, right-click use, normal armor-slot equip, number-key hot-swap, offhand swap, shift-click, inventory drag, and dispenser armor equip are blocked.
+- EntityToggleGlideEvent always blocks starting Elytra gliding.
+- PlayerMoveEvent immediately stops any active glide.
+- A repeating server-side safety sweep checks every online player every tick and removes Elytras from chest slots inserted by commands or other plugins.
 
 Shulker:
 - Shulker shells and Shulker boxes are gated.

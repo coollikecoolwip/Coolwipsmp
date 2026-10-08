@@ -2,6 +2,14 @@
 
 All notable changes to CoolWipsProgression are documented here.
 
+## 1.1.3
+
+- Fixed the GitHub Actions compile failure caused by passing a Player method reference directly to runTaskTimer.
+- The repeating Elytra safety sweep now checks every online player through a valid Runnable.
+- Elytra remains permanently disabled and cannot be enabled through configuration or /progression unlock elytra.
+
+
+
 ## 1.1.2
 
 - Hard-disabled Elytra server-wide.
