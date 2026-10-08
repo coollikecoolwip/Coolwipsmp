@@ -21,6 +21,7 @@ import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
 import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
+import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.event.inventory.PrepareSmithingEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
 import org.bukkit.event.player.PlayerInteractEvent;
@@ -273,6 +274,22 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
             ItemStack current = event.getCurrentItem();
             if (lockedArmor(player, current)) {
                 event.setCancelled(true);
+            }
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onEquipDrag(InventoryDragEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+
+        ItemStack cursor = event.getOldCursor();
+        if (cursor == null || cursor.getType() == Material.AIR || !isGatedArmor(cursor.getType())) return;
+
+        for (int rawSlot : event.getRawSlots()) {
+            if (event.getView().getSlotType(rawSlot) == SlotType.ARMOR
+                    && lockedArmor(player, cursor)) {
+                event.setCancelled(true);
+                return;
             }
         }
     }
