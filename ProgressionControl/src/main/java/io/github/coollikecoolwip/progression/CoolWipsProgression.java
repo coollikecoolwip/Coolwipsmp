@@ -5,6 +5,7 @@ import org.bukkit.GameMode;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.World;
+import org.bukkit.block.Block;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -14,9 +15,11 @@ import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
+import org.bukkit.event.block.BlockDispenseArmorEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
+import org.bukkit.event.inventory.InventoryAction;
 import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.inventory.PrepareSmithingEvent;
 import org.bukkit.event.player.PlayerChangedWorldEvent;
@@ -140,6 +143,21 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         };
     }
 
+    private boolean isGatedArmor(Material type) {
+        return type == Material.ELYTRA
+                || type == Material.IRON_HELMET || type == Material.IRON_CHESTPLATE || type == Material.IRON_LEGGINGS || type == Material.IRON_BOOTS
+                || type == Material.GOLDEN_HELMET || type == Material.GOLDEN_CHESTPLATE || type == Material.GOLDEN_LEGGINGS || type == Material.GOLDEN_BOOTS
+                || type == Material.DIAMOND_HELMET || type == Material.DIAMOND_CHESTPLATE || type == Material.DIAMOND_LEGGINGS || type == Material.DIAMOND_BOOTS
+                || type == Material.NETHERITE_HELMET || type == Material.NETHERITE_CHESTPLATE || type == Material.NETHERITE_LEGGINGS || type == Material.NETHERITE_BOOTS;
+    }
+
+    private boolean lockedArmor(Player player, ItemStack item) {
+        if (item == null || item.getType() == Material.AIR || !isGatedArmor(item.getType())) return false;
+
+        Gate gate = gateForItem(item.getType());
+        return gate != null && locked(player, gate);
+    }
+
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBreak(BlockBreakEvent event) {
         Player player = event.getPlayer();
@@ -198,6 +216,64 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
         if (gate != null && locked(player, gate)) {
             event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onDispenseArmor(BlockDispenseArmorEvent event) {
+        if (!(event.getTargetEntity() instanceof Player player)) return;
+
+        ItemStack item = event.getItem();
+        if (lockedArmor(player, item)) {
+            event.setCancelled(true);
+        }
+    }
+
+    private boolean incomingArmorItem(InventoryClickEvent event) {
+        ItemStack cursor = event.getCursor();
+        if (cursor != null && cursor.getType() != Material.AIR && isGatedArmor(cursor.getType())) {
+            return true;
+        }
+
+        if (event.getClick().isKeyboardClick()) {
+            int hotbarButton = event.getHotbarButton();
+            if (hotbarButton >= 0 && hotbarButton < 9) {
+                ItemStack hotbarItem = event.getWhoClicked().getInventory().getItem(hotbarButton);
+                return hotbarItem != null && hotbarItem.getType() != Material.AIR && isGatedArmor(hotbarItem.getType());
+            }
+        }
+
+        return false;
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onEquip(InventoryClickEvent event) {
+        if (!(event.getWhoClicked() instanceof Player player)) return;
+
+        if (event.getSlotType() == SlotType.ARMOR && incomingArmorItem(event)) {
+            ItemStack incoming = event.getCursor();
+
+            if (event.getClick().isKeyboardClick()) {
+                int hotbarButton = event.getHotbarButton();
+                if (hotbarButton >= 0 && hotbarButton < 9) {
+                    incoming = player.getInventory().getItem(hotbarButton);
+                }
+            }
+
+            if (lockedArmor(player, incoming)) {
+                event.setCancelled(true);
+                return;
+            }
+        }
+
+        // Shift-clicking a gated armor item from the player's inventory auto-equips it.
+        // Only cancel when the click can actually move the item into another inventory.
+        if (event.getAction() == InventoryAction.MOVE_TO_OTHER_INVENTORY
+                && event.getClickedInventory() == player.getInventory()) {
+            ItemStack current = event.getCurrentItem();
+            if (lockedArmor(player, current)) {
+                event.setCancelled(true);
+            }
         }
     }
 
@@ -300,24 +376,6 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         Location result = source.clone();
         result.setWorld(overworld);
         return result;
-    }
-
-    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
-    public void onEquip(InventoryClickEvent event) {
-        if (!(event.getWhoClicked() instanceof Player player)) return;
-
-        ItemStack candidate = event.getCursor();
-        if (candidate == null || candidate.getType() == Material.AIR) {
-            candidate = event.getCurrentItem();
-        }
-        if (candidate == null || candidate.getType() == Material.AIR) return;
-
-        Gate gate = gateForItem(candidate.getType());
-        if (gate == null || event.getSlotType() != SlotType.ARMOR) return;
-
-        if (locked(player, gate)) {
-            event.setCancelled(true);
-        }
     }
 
     @Override
