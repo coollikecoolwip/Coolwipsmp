@@ -57,6 +57,10 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         loadGates();
         getServer().getPluginManager().registerEvents(this, this);
 
+        // Elytra is permanently disabled on CoolWips SMP. This safety sweep also
+        // catches direct inventory changes made by commands or other plugins.
+        getServer().getScheduler().runTaskTimer(this, this::enforceElytraBan, 1L, 1L);
+
         Objects.requireNonNull(getCommand("progression")).setExecutor(this);
         Objects.requireNonNull(getCommand("progression")).setTabCompleter(this);
 
@@ -160,12 +164,19 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
                 || type == Material.NETHERITE_HELMET || type == Material.NETHERITE_CHESTPLATE || type == Material.NETHERITE_LEGGINGS || type == Material.NETHERITE_BOOTS;
     }
 
-    private boolean elytraLocked(Player player) {
-        return !unlocked(Gate.ELYTRA) && !bypass(player);
+    private boolean elytraBlocked(Player player) {
+        // Elytra is intentionally disabled server-wide. The normal gate state and
+        // progression bypass permission must never allow Elytra flight/equipping.
+        return true;
     }
 
     private boolean lockedArmor(Player player, ItemStack item) {
         if (item == null || item.getType() == Material.AIR || !isGatedArmor(item.getType())) return false;
+
+        if (item.getType() == Material.ELYTRA) {
+            deny(player, Gate.ELYTRA);
+            return true;
+        }
 
         Gate gate = gateForItem(item.getType());
         return gate != null && locked(player, gate);
@@ -209,7 +220,15 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onPickup(PlayerPickupItemEvent event) {
         Player player = event.getPlayer();
-        Gate gate = gateForItem(event.getItem().getItemStack().getType());
+        Material type = event.getItem().getItemStack().getType();
+
+        if (type == Material.ELYTRA) {
+            event.setCancelled(true);
+            deny(player, Gate.ELYTRA);
+            return;
+        }
+
+        Gate gate = gateForItem(type);
         if (gate != null && locked(player, gate)) event.setCancelled(true);
     }
 
@@ -218,6 +237,13 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         if (!(event.getWhoClicked() instanceof Player player)) return;
 
         ItemStack result = event.getRecipe().getResult();
+
+        if (result.getType() == Material.ELYTRA) {
+            event.setCancelled(true);
+            deny(player, Gate.ELYTRA);
+            return;
+        }
+
         Gate gate = gateForItem(result.getType());
 
         if (gate != null && locked(player, gate)) {
@@ -250,7 +276,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         if (!(event.getTargetEntity() instanceof Player player)) return;
 
         ItemStack item = event.getItem();
-        if (lockedArmor(player, item)) {
+        if (item.getType() == Material.ELYTRA || lockedArmor(player, item)) {
             event.setCancelled(true);
         }
     }
@@ -348,6 +374,12 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         ItemStack item = event.getItem();
 
         if (item != null) {
+            if (item.getType() == Material.ELYTRA) {
+                event.setCancelled(true);
+                deny(player, Gate.ELYTRA);
+                return;
+            }
+
             Gate gate = gateForItem(item.getType());
             if (gate != null && locked(player, gate)) {
                 event.setCancelled(true);
@@ -373,23 +405,35 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onElytraGlide(EntityToggleGlideEvent event) {
         if (!(event.getEntity() instanceof Player player)) return;
-        if (!event.isGliding() || !elytraLocked(player)) return;
+        if (!event.isGliding()) return;
 
-        ItemStack chestplate = player.getInventory().getChestplate();
-        if (chestplate != null && chestplate.getType() == Material.ELYTRA) {
-            event.setCancelled(true);
-            deny(player, Gate.ELYTRA);
-        }
+        // Hard server-wide Elytra disable. Ignore the normal gate state and bypass permission.
+        event.setCancelled(true);
+        deny(player, Gate.ELYTRA);
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onElytraMove(PlayerMoveEvent event) {
-        Player player = event.getPlayer();
-        if (!player.isGliding() || !elytraLocked(player)) return;
+        if (event.getPlayer().isGliding()) {
+            event.getPlayer().setGliding(false);
+        }
+
+        enforceElytraBan(event.getPlayer());
+    }
+
+    private void enforceElytraBan(Player player) {
+        if (player.isGliding()) {
+            player.setGliding(false);
+        }
 
         ItemStack chestplate = player.getInventory().getChestplate();
-        if (chestplate != null && chestplate.getType() == Material.ELYTRA) {
-            player.setGliding(false);
+        if (chestplate == null || chestplate.getType() != Material.ELYTRA) return;
+
+        player.getInventory().setChestplate(null);
+
+        Map<Integer, ItemStack> leftovers = player.getInventory().addItem(chestplate);
+        for (ItemStack leftover : leftovers.values()) {
+            player.getWorld().dropItemNaturally(player.getLocation(), leftover);
         }
     }
 

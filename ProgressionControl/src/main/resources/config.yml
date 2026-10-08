@@ -1,4 +1,4 @@
-# CoolWips Progression Control 1.1.1
+# CoolWips Progression Control 1.1.2
 # Every gate is LOCKED by default.
 # Use /progression unlock <gate> to open a stage for normal players.
 # Unlock state is saved here and survives restarts.

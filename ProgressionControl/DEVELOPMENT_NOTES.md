@@ -1,6 +1,6 @@
 # CoolWipsProgression Development Notes
 
-Current version: 1.1.1
+Current version: 1.1.2
 
 ## Versioning rule
 

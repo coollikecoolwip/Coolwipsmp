@@ -2,6 +2,15 @@
 
 All notable changes to CoolWipsProgression are documented here.
 
+## 1.1.2
+
+- Hard-disabled Elytra server-wide.
+- Elytra cannot be equipped via armor-slot clicks, hot-swaps, offhand swaps, shift-clicks, dragging, right-click auto-equip, or dispenser armor equip.
+- Elytra pickup and Elytra-based interaction are blocked.
+- Elytra gliding is always cancelled, regardless of gate state, bypass permission, game mode, or how the Elytra reached the chest slot.
+- Added a continuous safety sweep that removes Elytras inserted directly into player chest slots by commands or other plugins.
+
+
 ## 1.1.1
 
 - Fixed locked Elytra flight after chestplate-to-Elytra swaps and other equip bypasses.
