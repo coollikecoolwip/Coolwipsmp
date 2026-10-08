@@ -3,12 +3,13 @@ name: Build CoolWips Progression
 on:
   push:
     paths:
-      - 'ProgressionControl/**'
+      - 'ProgressionControl/pom.xml'
+      - 'ProgressionControl/src/**'
       - '.github/workflows/build-progression.yml'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: progression-build
@@ -32,16 +33,33 @@ jobs:
           java-version: '25'
           cache: maven
 
+      - name: Resolve plugin version
+        run: echo "VERSION=$(mvn -q -DforceStdout help:evaluate -Dexpression=project.version)" >> "$GITHUB_ENV"
+
       - name: Build plugin
         run: mvn -B -ntp clean package
 
       - name: Verify JAR exists
-        run: test -f target/CoolWipsProgression-1.1.0.jar
+        run: test -f "target/CoolWipsProgression-${VERSION}.jar"
 
       - name: Upload JAR
         uses: actions/upload-artifact@v4
         with:
-          name: CoolWipsProgression-1.1.0
-          path: ProgressionControl/target/CoolWipsProgression-1.1.0.jar
+          name: CoolWipsProgression-${{ env.VERSION }}
+          path: ProgressionControl/target/CoolWipsProgression-${{ env.VERSION }}.jar
           if-no-files-found: error
           retention-days: 14
+
+      - name: Commit built JAR to repository
+        working-directory: .
+        run: |
+          cp "ProgressionControl/target/CoolWipsProgression-${VERSION}.jar" "ProgressionControl/CoolWipsProgression-${VERSION}.jar"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "ProgressionControl/CoolWipsProgression-${VERSION}.jar"
+          if git diff --cached --quiet; then
+            echo "JAR is already up to date."
+            exit 0
+          fi
+          git commit -m "Build CoolWipsProgression ${VERSION} JAR"
+          git push
