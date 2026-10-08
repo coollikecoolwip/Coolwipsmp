@@ -17,6 +17,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.BlockBreakEvent;
 import org.bukkit.event.block.BlockDispenseArmorEvent;
+import org.bukkit.event.block.BlockDispenseEvent;
 import org.bukkit.event.block.BlockIgniteEvent;
 import org.bukkit.event.block.BlockPlaceEvent;
 import org.bukkit.event.inventory.CraftItemEvent;
@@ -244,6 +245,13 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
         ItemStack item = event.getItem();
         if (lockedArmor(player, item)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onDispenseShulker(BlockDispenseEvent event) {
+        if (isShulkerBox(event.getItem().getType()) && !unlocked(Gate.SHULKER)) {
             event.setCancelled(true);
         }
     }
