@@ -217,3 +217,8 @@ It builds with Java 25 and uploads the JAR as a workflow artifact.
 ## Version history
 
 See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+
+## Bug-fix versioning
+
+Each bug fix increments the patch version by 1 (for example, 1.1.0 -> 1.1.1 -> 1.1.2). The GitHub Actions build reads the Maven version automatically, uploads the matching JAR, and commits the built JAR to the root of `ProgressionControl/`.
