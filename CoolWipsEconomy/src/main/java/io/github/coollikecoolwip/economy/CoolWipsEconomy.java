@@ -65,9 +65,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<EntityType, Long> mobShopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
-    private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl, marketRulesUrl;
+    private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl, mobShopUrl, marketRulesUrl;
     private static final String DEFAULT_PRICES_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt";
     private static final String DEFAULT_SHOP_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt";
+    private static final String DEFAULT_MOB_SHOP_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/mob-shop.txt";
     private int maxItems, pricesPerPage, maxMobsPerPurchase;
     private long maxMoney, renameCost, repairCost;
     private boolean sellsDisabled;
@@ -226,6 +227,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         loadRemotePrices();
         loadRemoteShop();
+        loadRemoteMobShop();
         loadRemoteMarketRules();
         startNonNegativeBalanceGuard();
         Bukkit.getScheduler().runTaskTimerAsynchronously(this, this::cleanupExpiredPendingState, 600L, 600L);
@@ -248,8 +250,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         buyReason = getConfig().getString("api.buy-reason", "CoolWips SMP Minecraft shop purchase");
         pricesUrl = getConfig().getString("prices-url", DEFAULT_PRICES_URL).trim();
         shopUrl = getConfig().getString("shop-url", DEFAULT_SHOP_URL).trim();
+        mobShopUrl = getConfig().getString("mob-shop-url", DEFAULT_MOB_SHOP_URL).trim();
         if (pricesUrl.isBlank()) pricesUrl = DEFAULT_PRICES_URL;
         if (shopUrl.isBlank()) shopUrl = DEFAULT_SHOP_URL;
+        if (mobShopUrl.isBlank()) mobShopUrl = DEFAULT_MOB_SHOP_URL;
         marketRulesUrl = getConfig().getString("market-rules-url",
                 "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/src/main/resources/market.txt").trim();
         if (marketRulesUrl.isBlank()) {
@@ -1537,6 +1541,97 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadRemoteFile(shopUrl, "shop.txt", shopPrices);
     }
 
+    private void loadRemoteMobShop() {
+        if (mobShopUrl.isBlank()) {
+            getLogger().warning("Mob shop URL is blank; keeping configured mob-shop prices.");
+            return;
+        }
+
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            try {
+                String url = mobShopUrl + (mobShopUrl.contains("?") ? "&" : "?")
+                        + "cacheBust=" + System.currentTimeMillis();
+                HttpRequest request = HttpRequest.newBuilder(URI.create(url))
+                        .timeout(Duration.ofSeconds(timeout()))
+                        .header("Accept", "text/plain")
+                        .header("Cache-Control", "no-cache")
+                        .GET()
+                        .build();
+                HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+
+                if (response.statusCode() < 200 || response.statusCode() >= 300) {
+                    getLogger().warning("Could not load mob-shop.txt from GitHub (HTTP "
+                            + response.statusCode() + "); keeping configured mob prices.");
+                    return;
+                }
+
+                Map<EntityType, Long> loaded = parseMobShopPrices(response.body(), "mob-shop.txt");
+                if (loaded.isEmpty()) {
+                    getLogger().warning("Remote mob-shop.txt contained no valid mob prices; keeping configured prices.");
+                    return;
+                }
+
+                Bukkit.getScheduler().runTask(this, () -> {
+                    mobShopPrices.clear();
+                    mobShopPrices.putAll(loaded);
+                    getLogger().info("Loaded " + loaded.size() + " mob-shop prices from GitHub mob-shop.txt.");
+                });
+            } catch (Exception e) {
+                getLogger().warning("Could not load remote mob-shop.txt: "
+                        + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage())
+                        + "; keeping configured mob prices.");
+            }
+        });
+    }
+
+    private Map<EntityType, Long> parseMobShopPrices(String text, String label) {
+        Map<EntityType, Long> loaded = new HashMap<>();
+
+        for (String rawLine : text.split("\\R")) {
+            String line = rawLine.trim();
+            if (line.isEmpty() || line.startsWith("#")) continue;
+
+            int separator = line.indexOf('=');
+            if (separator < 0) separator = line.indexOf(':');
+            if (separator <= 0) {
+                getLogger().warning("Ignoring invalid line in " + label + ": " + rawLine);
+                continue;
+            }
+
+            String rawType = line.substring(0, separator).trim();
+            String entityName = rawType.toUpperCase(Locale.ROOT)
+                    .replace('-', '_').replace(' ', '_');
+            EntityType type;
+            try {
+                type = EntityType.valueOf(entityName);
+            } catch (IllegalArgumentException e) {
+                getLogger().warning("Ignoring unknown mob in " + label + ": " + rawType);
+                continue;
+            }
+
+            Class<? extends Entity> entityClass = type.getEntityClass();
+            if (!type.isSpawnable() || entityClass == null || !Mob.class.isAssignableFrom(entityClass)) {
+                getLogger().warning("Ignoring non-mob or unspawnable entry in " + label + ": " + rawType);
+                continue;
+            }
+
+            try {
+                long price = Long.parseLong(line.substring(separator + 1).trim());
+                if (price <= 0) {
+                    getLogger().warning("Ignoring non-positive mob price in " + label + ": " + rawType);
+                    continue;
+                }
+                if (loaded.put(type, price) != null) {
+                    getLogger().warning("Duplicate mob entry in " + label + " for " + entityName
+                            + "; the last price in the file will be used.");
+                }
+            } catch (NumberFormatException e) {
+                getLogger().warning("Ignoring invalid mob price in " + label + ": " + rawLine);
+            }
+        }
+        return loaded;
+    }
+
     private void loadRemoteMarketRules() {
         if (marketRulesUrl.isBlank()) return;
 
@@ -2213,6 +2308,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     loadBundledMarketRules();
                     loadRemotePrices();
                     loadRemoteShop();
+                    loadRemoteMobShop();
                     loadRemoteMarketRules();
                     sender.sendMessage("§aCoolWips Economy reload started.");
                     return true;
@@ -4761,6 +4857,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§7Market rules URL: §f" + marketRulesUrl);
         sender.sendMessage("§7Prices URL: §f" + pricesUrl);
         sender.sendMessage("§7Shop URL: §f" + shopUrl);
+        sender.sendMessage("§7Mob shop URL: §f" + mobShopUrl);
 
         if (tokenMissing()) return;
 
