@@ -22,6 +22,7 @@ import org.bukkit.event.player.PlayerInteractEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
+import org.bukkit.inventory.meta.ItemMeta;
 import org.bukkit.inventory.Recipe;
 import org.bukkit.inventory.ShapedRecipe;
 import org.bukkit.inventory.ShapelessRecipe;
@@ -81,7 +82,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private int confirmationSeconds;
     private double sellTax, buyTax;
     private long minimumBounty, maximumBounty;
-    private NamespacedKey sellChestOwnerKey, sellChestEarnedKey;
+    private NamespacedKey sellChestOwnerKey, sellChestEarnedKey, mobTokenTypeKey;
     private final Map<String, ReentrantLock> sellChestLocks = new ConcurrentHashMap<>();
     private final Set<String> pendingAutomaticSellChests = ConcurrentHashMap.newKeySet();
     private final Map<String, Long> automaticSellChestCooldowns = new ConcurrentHashMap<>();
@@ -204,6 +205,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(timeout())).build();
         sellChestOwnerKey = new NamespacedKey(this, "sell-chest-owner");
         sellChestEarnedKey = new NamespacedKey(this, "sell-chest-earned");
+        mobTokenTypeKey = new NamespacedKey(this, "mob-token-type");
         loadBundledMarketRules();
         loadMarketLedger();
         loadEconomyStats();
@@ -3856,6 +3858,104 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return floor.getType().isSolid() || feet.isLiquid();
     }
 
+    private ItemStack createMobToken(EntityType type, int amount) {
+        Material itemType = Material.matchMaterial(type.name() + "_SPAWN_EGG");
+        if (itemType == null) itemType = Material.PAPER;
+
+        ItemStack token = new ItemStack(itemType, amount);
+        ItemMeta meta = token.getItemMeta();
+        if (meta != null) {
+            String mobName = type.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+            String displayName = Arrays.stream(mobName.split(" "))
+                    .filter(part -> !part.isBlank())
+                    .map(part -> part.substring(0, 1).toUpperCase(Locale.ROOT) + part.substring(1))
+                    .collect(java.util.stream.Collectors.joining(" "));
+            meta.setDisplayName("§a" + displayName + " Spawn Token");
+            meta.setLore(List.of("§7Right-click a block to spawn this mob.", "§8Purchased from the CoolWips Mob Shop"));
+            meta.getPersistentDataContainer().set(mobTokenTypeKey, PersistentDataType.STRING, type.name());
+            token.setItemMeta(meta);
+        }
+        return token;
+    }
+
+    @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onMobTokenUse(PlayerInteractEvent event) {
+        if (event.getHand() != EquipmentSlot.HAND
+                || event.getAction() != Action.RIGHT_CLICK_BLOCK
+                || event.getClickedBlock() == null) {
+            return;
+        }
+
+        ItemStack token = event.getItem();
+        if (token == null || token.getType().isAir() || !token.hasItemMeta()) return;
+
+        ItemMeta meta = token.getItemMeta();
+        if (meta == null) return;
+        String rawType = meta.getPersistentDataContainer().get(mobTokenTypeKey, PersistentDataType.STRING);
+        if (rawType == null) return;
+
+        event.setCancelled(true);
+        EntityType type = parseMobType(rawType);
+        Class<? extends Entity> entityClass = type == null ? null : type.getEntityClass();
+        if (type == null || !type.isSpawnable() || entityClass == null
+                || !Mob.class.isAssignableFrom(entityClass)) {
+            event.getPlayer().sendMessage("§cThis mob token is invalid. Keep it and contact staff.");
+            return;
+        }
+
+        Player player = event.getPlayer();
+        var targetBlock = event.getClickedBlock().getRelative(event.getBlockFace());
+        var world = targetBlock.getWorld();
+        if (!world.isChunkLoaded(targetBlock.getX() >> 4, targetBlock.getZ() >> 4)) {
+            player.sendMessage("§cThat location is not loaded. Try placing the mob token somewhere else.");
+            return;
+        }
+
+        Location spawnLocation = targetBlock.getLocation().add(0.5, 0, 0.5);
+        if (!isSafeMobSpawnLocation(spawnLocation)) {
+            player.sendMessage("§cThere is not enough safe space there to spawn this mob. The token was not used.");
+            return;
+        }
+
+        boolean occupied = world.getNearbyEntities(spawnLocation, 0.7, 1.2, 0.7).stream()
+                .anyMatch(entity -> entity instanceof Mob || entity instanceof Player);
+        if (occupied) {
+            player.sendMessage("§cThat spot is occupied. The token was not used.");
+            return;
+        }
+
+        try {
+            Entity spawned = world.spawnEntity(spawnLocation, type);
+            if (!(spawned instanceof Mob) || !spawned.isValid()) {
+                if (spawned != null) spawned.remove();
+                player.sendMessage("§cThe server could not spawn that mob. The token was not used.");
+                return;
+            }
+
+            // Consume only after a mob was successfully created. Failed/cancelled spawns keep the token.
+            ItemStack handItem = player.getInventory().getItemInMainHand();
+            ItemMeta handMeta = handItem.hasItemMeta() ? handItem.getItemMeta() : null;
+            String handType = handMeta == null ? null
+                    : handMeta.getPersistentDataContainer().get(mobTokenTypeKey, PersistentDataType.STRING);
+            if (!type.name().equals(handType)) {
+                spawned.remove();
+                player.sendMessage("§cYour mob token changed before it could be used. No token was consumed.");
+                return;
+            }
+            if (handItem.getAmount() <= 1) {
+                player.getInventory().setItemInMainHand(new ItemStack(Material.AIR));
+            } else {
+                handItem.setAmount(handItem.getAmount() - 1);
+                player.getInventory().setItemInMainHand(handItem);
+            }
+
+            player.sendMessage("§aSpawned a §f" + type.name().toLowerCase(Locale.ROOT).replace('_', ' ') + "§a.");
+        } catch (Exception e) {
+            player.sendMessage("§cThe server could not spawn that mob. The token was not used.");
+            getLogger().warning("Mob token spawn failed for " + player.getName() + " (" + type.name() + "): " + e.getMessage());
+        }
+    }
+
     private void buyMob(Player p, String rawType, int requested) {
         EntityType type = parseMobType(rawType);
         Long unitPrice = type == null ? null : mobShopPrices.get(type);
@@ -3890,15 +3990,15 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        List<Location> spawnLocations = findMobSpawnLocations(p, requested);
-        if (spawnLocations.size() != requested) {
-            p.sendMessage("§cThere is not enough safe, loaded space nearby to spawn that many mobs.");
+        ItemStack mobTokens = createMobToken(type, requested);
+        if (!canFitItems(p, List.of(mobTokens))) {
+            p.sendMessage("§cYou need enough inventory space to receive the mob token before purchasing.");
             return;
         }
 
         ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), key -> new ReentrantLock());
         if (!lock.tryLock()) {
-            p.sendMessage("§eYou already have an economy transaction processing. Please wait.");
+            p.sendMessage("§eYou already have a transaction processing. Please wait.");
             return;
         }
 
@@ -3908,9 +4008,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             return;
         }
 
-        p.sendMessage("§7Buying §f" + requested + "x "
-                + type.name().toLowerCase(Locale.ROOT).replace('_', ' ')
-                + " §7for §c$" + cost + "§7 (including buy tax)...");
+        String displayMob = type.name().toLowerCase(Locale.ROOT).replace('_', ' ');
+        p.sendMessage("§7Buying §f" + requested + "x " + displayMob
+                + " spawn token(s) §7for §c$" + cost + "§7 (including buy tax)...");
 
         final long money = cost;
         final EntityType finalType = type;
@@ -3955,38 +4055,20 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
             Bukkit.getScheduler().runTask(this, () -> {
                 if (!p.isOnline()) {
-                    reverseMoney(discordId, money, "Mob shop purchase reversal (player offline)", p, lock);
+                    reverseMoney(discordId, money, "Mob token purchase reversal (player offline)", p, lock);
                     return;
                 }
 
-                List<Entity> spawned = new ArrayList<>();
-                try {
-                    for (Location location : spawnLocations) {
-                        if (!isSafeMobSpawnLocation(location)) {
-                            throw new IllegalStateException("Spawn space became obstructed.");
-                        }
-                        Entity entity = location.getWorld().spawnEntity(location, finalType);
-                        if (!(entity instanceof Mob) || !entity.isValid()) {
-                            if (entity != null) entity.remove();
-                            throw new IllegalStateException("The server refused to spawn a mob.");
-                        }
-                        spawned.add(entity);
-                    }
-                } catch (Exception e) {
-                    for (Entity entity : spawned) {
-                        try { entity.remove(); } catch (Exception ignored) {}
-                    }
-                    p.sendMessage("§cThe server could not spawn every mob. Reversing your payment...");
-                    getLogger().warning("Mob shop spawn failed for " + p.getName() + " buying "
-                            + requested + " " + finalType.name() + ": " + e.getMessage());
-                    reverseMoney(discordId, money, "Mob shop spawn failure reversal", p, lock);
+                ItemStack tokenStack = createMobToken(finalType, requested);
+                if (!addItemsAtomically(p, List.of(tokenStack))) {
+                    p.sendMessage("§cYour mob tokens could not be delivered. Reversing your payment...");
+                    reverseMoney(discordId, money, "Mob token delivery failure reversal", p, lock);
                     return;
                 }
 
                 recordMobPurchase(p.getUniqueId(), p.getName(), finalType, requested, money);
-                p.sendMessage("§aBought and spawned §f" + requested + "x "
-                        + finalType.name().toLowerCase(Locale.ROOT).replace('_', ' ')
-                        + " §afor §c$" + money + "§a.");
+                p.sendMessage("§aBought §f" + requested + "x " + displayMob
+                        + " spawn token(s) §afor §c$" + money + "§a. Right-click a block anywhere safe to spawn them.");
                 lock.unlock();
             });
         });
