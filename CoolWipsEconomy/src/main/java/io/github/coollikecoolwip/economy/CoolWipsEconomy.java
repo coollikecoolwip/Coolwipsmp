@@ -4090,10 +4090,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         });
     }
     private ItemStack createMobToken(EntityType type, int amount) {
-        Material itemType = Material.matchMaterial(type.name() + "_SPAWN_EGG");
-        if (itemType == null) itemType = Material.PAPER;
-
-        ItemStack token = new ItemStack(itemType, amount);
+        // Always use a custom paper token. Real spawn eggs can be applied to spawners,
+        // changing their type and enabling effectively unlimited mob spawning.
+        ItemStack token = new ItemStack(Material.PAPER, amount);
         ItemMeta meta = token.getItemMeta();
         if (meta != null) {
             String mobName = type.name().toLowerCase(Locale.ROOT).replace('_', ' ');
@@ -4126,6 +4125,14 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (rawType == null) return;
 
         event.setCancelled(true);
+
+        // Also protect old purchased tokens that were issued as actual spawn eggs.
+        Material clickedType = event.getClickedBlock().getType();
+        if (clickedType == Material.SPAWNER || clickedType == Material.TRIAL_SPAWNER) {
+            event.getPlayer().sendMessage("§cPurchased mob tokens cannot be used on spawners. They only spawn one mob per token.");
+            return;
+        }
+
         EntityType type = parseMobType(rawType);
         Class<? extends Entity> entityClass = type == null ? null : type.getEntityClass();
         if (type == null || !type.isSpawnable() || entityClass == null
