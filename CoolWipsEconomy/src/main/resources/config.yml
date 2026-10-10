@@ -2,6 +2,7 @@ api-token: "PUT_YOUR_UNBELIEVABOAT_API_TOKEN_HERE"
 guild-id: "1025178490481418280"
 prices-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt"
 shop-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt"
+mob-shop-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/mob-shop.txt"
 market-rules-url: "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/src/main/resources/market.txt"
 api:
   base-url: "https://unbelievaboat.com/api/v1"
@@ -103,45 +104,7 @@ shop:
   LEAD: 200
   NAME_TAG: 1000
 
-# /buymob <entity_type> [amount]. Prices are before the configured buy-tax.
-# Players can only buy spawnable Mob entities listed in this section.
-mob-shop:
-  CHICKEN: 50
-  COW: 100
-  PIG: 75
-  SHEEP: 80
-  RABBIT: 100
-  HORSE: 1000
-  DONKEY: 900
-  MULE: 900
-  WOLF: 500
-  CAT: 300
-  BEE: 250
-  VILLAGER: 2500
-  IRON_GOLEM: 10000
-  ZOMBIE: 500
-  SKELETON: 750
-  CREEPER: 5000
-  SPIDER: 400
-  CAVE_SPIDER: 750
-  ENDERMAN: 2500
-  BLAZE: 2000
-  SLIME: 1000
-  MAGMA_CUBE: 1500
-  PILLAGER: 1200
-  PIGLIN: 1500
-  PHANTOM: 1500
-  GUARDIAN: 2500
-  SHULKER: 3000
-  POLAR_BEAR: 1200
-  PANDA: 750
-  FOX: 500
-  GOAT: 400
-  FROG: 350
-  MOOSHROOM: 600
-  PARROT: 700
-  TURTLE: 500
-  STRIDER: 700
+# Mob types and prices are loaded from mob-shop.txt using mob-shop-url above.
 
 maintenance:
   all-sells-disabled: false
