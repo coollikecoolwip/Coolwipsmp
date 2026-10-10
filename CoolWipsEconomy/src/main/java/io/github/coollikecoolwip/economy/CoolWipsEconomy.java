@@ -8,6 +8,9 @@ import org.bukkit.command.*;
 import org.bukkit.block.Block;
 import org.bukkit.block.Chest;
 import org.bukkit.block.DoubleChest;
+import org.bukkit.entity.Entity;
+import org.bukkit.entity.EntityType;
+import org.bukkit.entity.Mob;
 import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.Listener;
@@ -58,12 +61,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // Selling is blocked until prices.txt has been successfully loaded. No stale/partial prices may be sold.
     private final AtomicBoolean pricesReady = new AtomicBoolean(false);
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
+    private final Map<EntityType, Long> mobShopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
     private HttpClient http;
     private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl, marketRulesUrl;
     private static final String DEFAULT_PRICES_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt";
     private static final String DEFAULT_SHOP_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt";
-    private int maxItems, pricesPerPage;
+    private int maxItems, pricesPerPage, maxMobsPerPurchase;
     private long maxMoney;
     private boolean sellsDisabled;
     private final Set<Material> maintenanceBlocks = ConcurrentHashMap.newKeySet();
@@ -206,7 +210,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadEconomyLedger();
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","buymob","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -251,6 +255,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
+        maxMobsPerPurchase = Math.max(1, Math.min(16, getConfig().getInt("settings.maximum-mobs-per-purchase", 5)));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
         transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
         confirmationSeconds = Math.max(0, getConfig().getInt("settings.confirmation-seconds", 10));
@@ -293,6 +298,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         shopPrices.clear();
         shopPrices.putAll(readConfigPrices("shop"));
+        loadMobShopPrices();
         validateCraftingEconomy();
         validateShopPrices();
         loadBounties();
@@ -327,6 +333,55 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (m != null && value > 0) result.put(m, value);
         }
         return result;
+    }
+
+    private void loadMobShopPrices() {
+        mobShopPrices.clear();
+        var section = getConfig().getConfigurationSection("mob-shop");
+
+        // Existing installations keep their old config.yml. Read the bundled defaults
+        // when the new section has not been added yet, without overwriting player config.
+        if (section == null) {
+            try (InputStream in = getResource("config.yml")) {
+                if (in != null) {
+                    section = YamlConfiguration.loadConfiguration(
+                            new InputStreamReader(in, StandardCharsets.UTF_8))
+                            .getConfigurationSection("mob-shop");
+                }
+            } catch (IOException e) {
+                getLogger().warning("Could not read bundled mob-shop defaults: " + e.getMessage());
+            }
+        }
+
+        if (section == null) {
+            getLogger().warning("No mob-shop prices are configured.");
+            return;
+        }
+
+        for (String rawType : section.getKeys(false)) {
+            EntityType type;
+            try {
+                type = EntityType.valueOf(rawType.replace(' ', '_').replace('-', '_').toUpperCase(Locale.ROOT));
+            } catch (IllegalArgumentException e) {
+                getLogger().warning("Ignoring unknown mob-shop entity type: " + rawType);
+                continue;
+            }
+
+            Class<? extends Entity> entityClass = type.getEntityClass();
+            if (!type.isSpawnable() || entityClass == null || !Mob.class.isAssignableFrom(entityClass)) {
+                getLogger().warning("Ignoring non-mob or unspawnable mob-shop entry: " + rawType);
+                continue;
+            }
+
+            long price = section.getLong(rawType, -1L);
+            if (price <= 0) {
+                getLogger().warning("Ignoring non-positive mob-shop price for " + rawType + ".");
+                continue;
+            }
+            mobShopPrices.put(type, price);
+        }
+
+        getLogger().info("Loaded " + mobShopPrices.size() + " mob-shop prices.");
     }
 
     private int timeout() {
@@ -1111,6 +1166,43 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 created ? "CREATE_MONEY" : "REMOVE_MONEY", category);
     }
 
+    private void recordMobPurchase(UUID uuid, String playerName, EntityType type, int amount, long money) {
+        if (uuid == null || type == null || amount <= 0 || money <= 0) return;
+        economyStatsLock.lock();
+        try {
+            refreshEconomyStatsDayLocked();
+            String prefix = "players." + uuid;
+            economyStatsData.set("money_removed",
+                    statAdd(economyStatsData.getLong("money_removed", 0L), money));
+            economyStatsData.set("sinks.MOB_SHOP",
+                    statAdd(economyStatsData.getLong("sinks.MOB_SHOP", 0L), money));
+            economyStatsData.set(prefix + ".removed",
+                    statAdd(economyStatsData.getLong(prefix + ".removed", 0L), money));
+            economyStatsData.set("mobs_bought",
+                    statAdd(economyStatsData.getLong("mobs_bought", 0L), amount));
+            economyStatsData.set("mobs_bought_by_type." + type.name(),
+                    statAdd(economyStatsData.getLong("mobs_bought_by_type." + type.name(), 0L), amount));
+            economyStatsData.set("mob_spend_by_type." + type.name(),
+                    statAdd(economyStatsData.getLong("mob_spend_by_type." + type.name(), 0L), money));
+            economyStatsData.set(prefix + ".mobs_bought",
+                    statAdd(economyStatsData.getLong(prefix + ".mobs_bought", 0L), amount));
+            economyStatsData.set(prefix + ".name", playerName);
+            economyStatsData.set(prefix + ".last_event", System.currentTimeMillis());
+
+            boolean flagged = economyStatsData.getBoolean(prefix + ".flagged_today", false);
+            if (!flagged && money >= anomalySingleSaleLimit) {
+                economyStatsData.set(prefix + ".flagged_today", true);
+                String flag = playerName + " (" + uuid + "): single economy event $" + money;
+                economyStatsData.set("flags." + uuid, flag);
+                getLogger().warning("ECONOMY_FLAG | " + flag);
+            }
+            requestEconomyStatsSaveLocked();
+        } finally {
+            economyStatsLock.unlock();
+        }
+        recordEconomyLedger(uuid, playerName, null, amount, money, "MOB_BUY", type.name());
+    }
+
     private void recordEconomyTransfer(UUID fromUuid, String fromName, UUID toUuid, String toName,
                                        long money, String category) {
         if (money <= 0) return;
@@ -1840,6 +1932,29 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 int amount = parseAmount(p, args.length == 2 ? args[1] : "1");
                 if (amount < 1) return true;
                 buy(p, args[0], amount);
+                return true;
+            }
+
+            case "buymob" -> {
+                if (!(sender instanceof Player p)) {
+                    sender.sendMessage("Only players can use /buymob.");
+                    return true;
+                }
+                if (!p.hasPermission("coolwipseconomy.mobshop")) {
+                    p.sendMessage("§cYou do not have permission to use the mob shop.");
+                    return true;
+                }
+                if (args.length == 0) {
+                    listMobShop(p);
+                    return true;
+                }
+                if (args.length < 1 || args.length > 2) {
+                    p.sendMessage("§cUsage: /buymob <mob> [amount]");
+                    return true;
+                }
+                int amount = parseAmount(p, args.length == 2 ? args[1] : "1");
+                if (amount < 1) return true;
+                buyMob(p, args[0], amount);
                 return true;
             }
 
@@ -3647,6 +3762,236 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         pendingTrades.remove(trade.buyerUuid());
     }
 
+    private void listMobShop(Player p) {
+        if (mobShopPrices.isEmpty()) {
+            p.sendMessage("§cThe mob shop has no valid prices configured.");
+            return;
+        }
+
+        String tax = BigDecimal.valueOf(buyTax).multiply(BigDecimal.valueOf(100))
+                .stripTrailingZeros().toPlainString();
+        p.sendMessage("§6§lMob Shop §7— prices per mob before " + tax + "% buy tax");
+        List<String> entries = mobShopPrices.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(Comparator.comparing(EntityType::name)))
+                .map(e -> e.getKey().name().toLowerCase(Locale.ROOT).replace('_', ' ')
+                        + ": §a$" + e.getValue())
+                .toList();
+        for (int i = 0; i < entries.size(); i += 5) {
+            p.sendMessage("§7" + String.join(" §8| §7",
+                    entries.subList(i, Math.min(i + 5, entries.size()))));
+        }
+        p.sendMessage("§7Usage: §f/buymob <mob> [amount] §7— max " + maxMobsPerPurchase + " per purchase.");
+        p.sendMessage("§7Alias: §f/mobshop");
+    }
+
+    private EntityType parseMobType(String raw) {
+        if (raw == null || raw.isBlank()) return null;
+        try {
+            return EntityType.valueOf(raw.trim().replace(' ', '_').replace('-', '_').toUpperCase(Locale.ROOT));
+        } catch (IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    private List<Location> findMobSpawnLocations(Player p, int amount) {
+        Location origin = p.getLocation();
+        var world = origin.getWorld();
+        if (world == null) return List.of();
+
+        double yaw = Math.toRadians(origin.getYaw());
+        double forwardX = -Math.sin(yaw);
+        double forwardZ = Math.cos(yaw);
+        int centerX = (int) Math.floor(origin.getX() + forwardX * 2.5);
+        int centerZ = (int) Math.floor(origin.getZ() + forwardZ * 2.5);
+        int baseY = origin.getBlockY();
+
+        List<Location> locations = new ArrayList<>();
+        Set<String> usedBlocks = new HashSet<>();
+        for (int radius = 0; radius <= 6 && locations.size() < amount; radius++) {
+            for (int dx = -radius; dx <= radius && locations.size() < amount; dx++) {
+                for (int dz = -radius; dz <= radius && locations.size() < amount; dz++) {
+                    if (radius > 0 && Math.max(Math.abs(dx), Math.abs(dz)) != radius) continue;
+
+                    int x = centerX + dx;
+                    int z = centerZ + dz;
+                    if (!world.isChunkLoaded(x >> 4, z >> 4)) continue;
+
+                    for (int yOffset : new int[]{0, 1, -1}) {
+                        int y = baseY + yOffset;
+                        if (y <= world.getMinHeight() || y + 2 >= world.getMaxHeight()) continue;
+                        Location candidate = new Location(world, x + 0.5, y, z + 0.5, origin.getYaw(), 0);
+                        String blockKey = x + ":" + y + ":" + z;
+                        if (usedBlocks.contains(blockKey) || !isSafeMobSpawnLocation(candidate)) continue;
+
+                        boolean occupied = world.getNearbyEntities(candidate, 0.7, 1.2, 0.7).stream()
+                                .anyMatch(entity -> entity instanceof Mob || entity instanceof Player);
+                        if (occupied) continue;
+
+                        usedBlocks.add(blockKey);
+                        locations.add(candidate);
+                        break;
+                    }
+                }
+            }
+        }
+        return locations.size() == amount ? locations : List.of();
+    }
+
+    private boolean isSafeMobSpawnLocation(Location location) {
+        if (location == null || location.getWorld() == null) return false;
+        var world = location.getWorld();
+        int x = location.getBlockX();
+        int y = location.getBlockY();
+        int z = location.getBlockZ();
+        if (y <= world.getMinHeight() || y + 2 >= world.getMaxHeight()
+                || !world.isChunkLoaded(x >> 4, z >> 4)) return false;
+
+        var feet = world.getBlockAt(x, y, z);
+        var head = world.getBlockAt(x, y + 1, z);
+        var top = world.getBlockAt(x, y + 2, z);
+        var floor = world.getBlockAt(x, y - 1, z);
+        if (!feet.isPassable() || !head.isPassable() || !top.isPassable()) return false;
+        if (feet.getType() == Material.LAVA || feet.getType() == Material.FIRE
+                || feet.getType() == Material.SOUL_FIRE) return false;
+        return floor.getType().isSolid() || feet.isLiquid();
+    }
+
+    private void buyMob(Player p, String rawType, int requested) {
+        EntityType type = parseMobType(rawType);
+        Long unitPrice = type == null ? null : mobShopPrices.get(type);
+        if (unitPrice == null) {
+            p.sendMessage("§cThat mob is not sold in the mob shop. Use /buymob to see available mobs.");
+            return;
+        }
+        if (requested < 1 || requested > maxMobsPerPurchase) {
+            p.sendMessage("§cYou can buy between 1 and " + maxMobsPerPurchase + " mobs per purchase.");
+            return;
+        }
+
+        Class<? extends Entity> entityClass = type.getEntityClass();
+        if (!type.isSpawnable() || entityClass == null || !Mob.class.isAssignableFrom(entityClass)) {
+            p.sendMessage("§cThat entity cannot be purchased as a mob.");
+            return;
+        }
+
+        long cost;
+        try {
+            cost = BigDecimal.valueOf(unitPrice)
+                    .multiply(BigDecimal.valueOf(requested))
+                    .multiply(BigDecimal.ONE.add(BigDecimal.valueOf(buyTax)))
+                    .setScale(0, RoundingMode.HALF_UP)
+                    .longValueExact();
+        } catch (ArithmeticException e) {
+            p.sendMessage("§cThat mob purchase is too large.");
+            return;
+        }
+        if (cost < 1 || cost > maxMoney) {
+            p.sendMessage("§cThat mob purchase must cost between $1 and $" + maxMoney + ".");
+            return;
+        }
+
+        List<Location> spawnLocations = findMobSpawnLocations(p, requested);
+        if (spawnLocations.size() != requested) {
+            p.sendMessage("§cThere is not enough safe, loaded space nearby to spawn that many mobs.");
+            return;
+        }
+
+        ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), key -> new ReentrantLock());
+        if (!lock.tryLock()) {
+            p.sendMessage("§eYou already have an economy transaction processing. Please wait.");
+            return;
+        }
+
+        String discordId = linkedId(p);
+        if (discordId == null) {
+            lock.unlock();
+            return;
+        }
+
+        p.sendMessage("§7Buying §f" + requested + "x "
+                + type.name().toLowerCase(Locale.ROOT).replace('_', ' ')
+                + " §7for §c$" + cost + "§7 (including buy tax)...");
+
+        final long money = cost;
+        final EntityType finalType = type;
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Long balance = bankBalance(discordId);
+            if (balance == null) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cMob purchase cancelled. I could not verify your balance."));
+                return;
+            }
+            if (balance < 0 || balance < money) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cMob purchase cancelled. You do not have enough money; your balance cannot go below $0."));
+                return;
+            }
+
+            BankMutationResult debit = changeBank(discordId, -money,
+                    "CoolWips SMP mob shop purchase", balance);
+            if (debit.state() == BankMutationState.NOT_APPLIED) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cMob purchase cancelled. No money was removed."));
+                return;
+            }
+            if (debit.state() == BankMutationState.UNKNOWN) {
+                unlockOnMainThread(lock);
+                Bukkit.getScheduler().runTask(this, () ->
+                        p.sendMessage("§cMob purchase could not be verified. Do not retry; contact staff."));
+                return;
+            }
+
+            Long remainingBalance = debit.balance();
+            if (remainingBalance == null || remainingBalance < 0) {
+                Bukkit.getScheduler().runTask(this, () -> {
+                    p.sendMessage("§cMob purchase could not be verified safely. Reversing your payment...");
+                    reverseMoney(discordId, money, "Mob shop negative-balance safeguard", p, lock);
+                });
+                return;
+            }
+
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!p.isOnline()) {
+                    reverseMoney(discordId, money, "Mob shop purchase reversal (player offline)", p, lock);
+                    return;
+                }
+
+                List<Entity> spawned = new ArrayList<>();
+                try {
+                    for (Location location : spawnLocations) {
+                        if (!isSafeMobSpawnLocation(location)) {
+                            throw new IllegalStateException("Spawn space became obstructed.");
+                        }
+                        Entity entity = location.getWorld().spawnEntity(location, finalType);
+                        if (!(entity instanceof Mob) || !entity.isValid()) {
+                            if (entity != null) entity.remove();
+                            throw new IllegalStateException("The server refused to spawn a mob.");
+                        }
+                        spawned.add(entity);
+                    }
+                } catch (Exception e) {
+                    for (Entity entity : spawned) {
+                        try { entity.remove(); } catch (Exception ignored) {}
+                    }
+                    p.sendMessage("§cThe server could not spawn every mob. Reversing your payment...");
+                    getLogger().warning("Mob shop spawn failed for " + p.getName() + " buying "
+                            + requested + " " + finalType.name() + ": " + e.getMessage());
+                    reverseMoney(discordId, money, "Mob shop spawn failure reversal", p, lock);
+                    return;
+                }
+
+                recordMobPurchase(p.getUniqueId(), p.getName(), finalType, requested, money);
+                p.sendMessage("§aBought and spawned §f" + requested + "x "
+                        + finalType.name().toLowerCase(Locale.ROOT).replace('_', ' ')
+                        + " §afor §c$" + money + "§a.");
+                lock.unlock();
+            });
+        });
+    }
+
     private void buy(Player p, String raw, int requested) {
         if (shopPrices.isEmpty()) {
             p.sendMessage("§cThe shop prices have not loaded yet. Try /buy again in a few seconds.");
@@ -4329,6 +4674,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (name.equals("buy") && args.length == 1) {
             String query = args[0].toUpperCase(Locale.ROOT);
             return shopPrices.keySet().stream().map(Enum::name)
+                    .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
+        }
+
+        if (name.equals("buymob") && args.length == 1) {
+            String query = args[0].toUpperCase(Locale.ROOT).replace(' ', '_').replace('-', '_');
+            return mobShopPrices.keySet().stream().map(Enum::name)
                     .filter(x -> x.startsWith(query)).sorted().limit(50).toList();
         }
 

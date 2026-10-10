@@ -14,6 +14,7 @@ settings:
   prices-per-page: 15
   transaction-cooldown-ms: 1500
   confirmation-seconds: 10
+  maximum-mobs-per-purchase: 5
   minimum-bounty: 100
   maximum-bounty: 1000000
   sell-tax: 0.05
@@ -92,6 +93,47 @@ shop:
   ANVIL: 2500
   LEAD: 200
   NAME_TAG: 1000
+
+# /buymob <entity_type> [amount]. Prices are before the configured buy-tax.
+# Players can only buy spawnable Mob entities listed in this section.
+mob-shop:
+  CHICKEN: 50
+  COW: 100
+  PIG: 75
+  SHEEP: 80
+  RABBIT: 100
+  HORSE: 1000
+  DONKEY: 900
+  MULE: 900
+  WOLF: 500
+  CAT: 300
+  BEE: 250
+  VILLAGER: 2500
+  IRON_GOLEM: 10000
+  ZOMBIE: 500
+  SKELETON: 750
+  CREEPER: 5000
+  SPIDER: 400
+  CAVE_SPIDER: 750
+  ENDERMAN: 2500
+  BLAZE: 2000
+  SLIME: 1000
+  MAGMA_CUBE: 1500
+  PILLAGER: 1200
+  PIGLIN: 1500
+  PHANTOM: 1500
+  GUARDIAN: 2500
+  SHULKER: 3000
+  POLAR_BEAR: 1200
+  PANDA: 750
+  FOX: 500
+  GOAT: 400
+  FROG: 350
+  MUSHROOM_COW: 600
+  PARROT: 700
+  TURTLE: 500
+  STRIDER: 700
+
 maintenance:
   all-sells-disabled: false
   blocked-items: []
