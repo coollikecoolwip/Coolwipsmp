@@ -257,8 +257,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
-        renameCost = Math.max(1L, getConfig().getLong("settings.rename-cost", 250L));
-        repairCost = Math.max(1L, getConfig().getLong("settings.repair-cost", 500L));
+        renameCost = Math.max(1L, getConfig().getLong("settings.rename-cost", 2500L));
+        repairCost = Math.max(1L, getConfig().getLong("settings.repair-cost", 5000L));
         maxMobsPerPurchase = Math.max(1, Math.min(16, getConfig().getInt("settings.maximum-mobs-per-purchase", 5)));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
         transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
