@@ -69,7 +69,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private static final String DEFAULT_PRICES_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt";
     private static final String DEFAULT_SHOP_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/shop.txt";
     private int maxItems, pricesPerPage, maxMobsPerPurchase;
-    private long maxMoney;
+    private long maxMoney, renameCost, repairCost;
     private boolean sellsDisabled;
     private final Set<Material> maintenanceBlocks = ConcurrentHashMap.newKeySet();
     private final Map<UUID, Long> lastTransaction = new ConcurrentHashMap<>();
@@ -212,7 +212,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadEconomyLedger();
         Bukkit.getPluginManager().registerEvents(this, this);
 
-        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","buymob","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
+        for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","buymob","rename","repair","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
             PluginCommand c = getCommand(name);
             if (c != null) {
                 c.setExecutor(this);
@@ -257,6 +257,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
+        renameCost = Math.max(1L, getConfig().getLong("settings.rename-cost", 250L));
+        repairCost = Math.max(1L, getConfig().getLong("settings.repair-cost", 500L));
         maxMobsPerPurchase = Math.max(1, Math.min(16, getConfig().getInt("settings.maximum-mobs-per-purchase", 5)));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
         transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
@@ -1937,6 +1939,18 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 return true;
             }
 
+            case "rename" -> {
+                if (!(sender instanceof Player p)) { sender.sendMessage("Only players can use /rename."); return true; }
+                if (!p.hasPermission("coolwipseconomy.rename")) { p.sendMessage("§cYou do not have permission to rename items."); return true; }
+                if (args.length < 1) { p.sendMessage("§eUsage: /rename <new name>"); return true; }
+                paidItemService(p, false, String.join(" ", args)); return true;
+            }
+            case "repair" -> {
+                if (!(sender instanceof Player p)) { sender.sendMessage("Only players can use /repair."); return true; }
+                if (!p.hasPermission("coolwipseconomy.repair")) { p.sendMessage("§cYou do not have permission to repair items."); return true; }
+                if (args.length != 0) { p.sendMessage("§eUsage: /repair"); return true; }
+                paidItemService(p, true, ""); return true;
+            }
             case "buymob" -> {
                 if (!(sender instanceof Player p)) {
                     sender.sendMessage("Only players can use /buymob.");
@@ -3858,6 +3872,47 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return floor.getType().isSolid() || feet.isLiquid();
     }
 
+    private void paidItemService(Player p, boolean repair, String rawName) {
+        long cost = repair ? repairCost : renameCost;
+        ItemStack original = p.getInventory().getItemInMainHand().clone();
+        if (original.getType().isAir()) { p.sendMessage(repair ? "§cHold a damaged item in your main hand." : "§cHold the item you want to rename."); return; }
+        ItemStack updated = original.clone(); ItemMeta meta = updated.getItemMeta();
+        if (meta == null) { p.sendMessage("§cThat item cannot be changed."); return; }
+        if (repair) {
+            if (!(meta instanceof org.bukkit.inventory.meta.Damageable d) || d.getDamage() <= 0) { p.sendMessage("§cThat item is not damaged or cannot be repaired."); return; }
+            ItemMeta m = updated.getItemMeta();
+            if (!(m instanceof org.bukkit.inventory.meta.Damageable damageable)) { p.sendMessage("§cThat item cannot be repaired."); return; }
+            damageable.setDamage(0); updated.setItemMeta(m);
+        } else {
+            String n = rawName == null ? "" : rawName.trim();
+            if (n.isEmpty() || n.length() > 64) { p.sendMessage("§cThe new name must be 1–64 characters."); return; }
+            meta.setDisplayName(org.bukkit.ChatColor.translateAlternateColorCodes('&', n)); updated.setItemMeta(meta);
+            if (original.equals(updated)) { p.sendMessage("§eThat item already has this name."); return; }
+        }
+        ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
+        if (!lock.tryLock()) { p.sendMessage("§eYou already have an economy transaction processing. Please wait."); return; }
+        String discordId = linkedId(p); if (discordId == null) { lock.unlock(); return; }
+        String category = repair ? "ITEM_REPAIR" : "ITEM_RENAME";
+        String reason = repair ? "CoolWips SMP paid item repair" : "CoolWips SMP paid item rename";
+        p.sendMessage("§7Processing " + (repair ? "repair" : "rename") + " for §c$" + cost + "§7...");
+        Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+            Long balance = bankBalance(discordId);
+            if (balance == null) { unlockOnMainThread(lock); Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§cCancelled: could not verify your balance.")); return; }
+            if (balance < 0 || balance < cost) { unlockOnMainThread(lock); Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§cYou do not have enough money; your balance cannot go below $0.")); return; }
+            BankMutationResult debit = changeBank(discordId, -cost, reason, balance);
+            if (debit.state() == BankMutationState.NOT_APPLIED) { unlockOnMainThread(lock); Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§cCancelled. No money was removed.")); return; }
+            if (debit.state() == BankMutationState.UNKNOWN) { unlockOnMainThread(lock); Bukkit.getScheduler().runTask(this, () -> p.sendMessage("§cPayment could not be verified. Do not retry; contact staff.")); return; }
+            if (debit.balance() == null || debit.balance() < 0) { Bukkit.getScheduler().runTask(this, () -> { p.sendMessage("§cPayment was not verified safely. Reversing payment..."); reverseMoney(discordId, cost, reason + " negative-balance safeguard", p, lock); }); return; }
+            Bukkit.getScheduler().runTask(this, () -> {
+                if (!p.isOnline()) { reverseMoney(discordId, cost, reason + " reversal (player offline)", p, lock); return; }
+                ItemStack current = p.getInventory().getItemInMainHand();
+                if (current == null || !current.equals(original)) { p.sendMessage("§cYour held item changed while payment processed. Reversing payment..."); reverseMoney(discordId, cost, reason + " reversal (item changed)", p, lock); return; }
+                try { p.getInventory().setItemInMainHand(updated.clone()); } catch (Exception e) { p.sendMessage("§cThe service failed. Reversing payment..."); reverseMoney(discordId, cost, reason + " reversal (item update failed)", p, lock); return; }
+                recordEconomyMoneyOnly(p.getUniqueId(), p.getName(), cost, category, false);
+                p.sendMessage(repair ? "§aRepaired your held item for §c$" + cost + "§a." : "§aRenamed your held item for §c$" + cost + "§a."); lock.unlock();
+            });
+        });
+    }
     private ItemStack createMobToken(EntityType type, int amount) {
         Material itemType = Material.matchMaterial(type.name() + "_SPAWN_EGG");
         if (itemType == null) itemType = Material.PAPER;

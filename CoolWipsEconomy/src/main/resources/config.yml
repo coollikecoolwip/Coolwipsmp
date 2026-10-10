@@ -15,6 +15,8 @@ settings:
   transaction-cooldown-ms: 1500
   confirmation-seconds: 10
   maximum-mobs-per-purchase: 5
+  rename-cost: 250
+  repair-cost: 500
   minimum-bounty: 100
   maximum-bounty: 1000000
   sell-tax: 0.05

@@ -1,5 +1,5 @@
 name: CoolWipsEconomy
-version: '1.4.7'
+version: '1.4.8'
 main: io.github.coollikecoolwip.economy.CoolWipsEconomy
 description: Sell and buy Minecraft items for UnbelievaBoat cash using DiscordSRV.
 author: coollikecoolwip
@@ -24,6 +24,14 @@ commands:
     usage: /buymob <mob> [amount]
     aliases: [mobshop]
     permission: coolwipseconomy.mobshop
+  rename:
+    description: Rename the item in your main hand for a fee.
+    usage: /rename <new name>
+    permission: coolwipseconomy.rename
+  repair:
+    description: Repair the damaged item in your main hand for a fee.
+    usage: /repair
+    permission: coolwipseconomy.repair
   shop:
     description: View items available for purchase.
     usage: /shop [page]
@@ -75,6 +83,10 @@ permissions:
   coolwipseconomy.buy:
     default: true
   coolwipseconomy.mobshop:
+    default: true
+  coolwipseconomy.rename:
+    default: true
+  coolwipseconomy.repair:
     default: true
   coolwipseconomy.admin:
     default: op
