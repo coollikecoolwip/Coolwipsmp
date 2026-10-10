@@ -239,6 +239,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private void loadSettings() {
         reloadConfig();
+        migrateItemServicePricing();
 
         token = getConfig().getString("api-token", "").trim();
         guildId = getConfig().getString("guild-id", "").trim();
@@ -257,8 +258,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
         maxItems = Math.max(1, getConfig().getInt("settings.maximum-items-per-sale", 2304));
         maxMoney = Math.max(1, getConfig().getLong("settings.maximum-money-per-sale", 1000000));
-        renameCost = Math.max(1L, getConfig().getLong("settings.rename-cost", 2500L));
-        repairCost = Math.max(1L, getConfig().getLong("settings.repair-cost", 5000L));
+        renameCost = Math.max(1L, getConfig().getLong("settings.rename-cost", 10000L));
+        repairCost = Math.max(1L, getConfig().getLong("settings.repair-cost", 10000L));
         maxMobsPerPurchase = Math.max(1, Math.min(16, getConfig().getInt("settings.maximum-mobs-per-purchase", 5)));
         pricesPerPage = Math.max(1, getConfig().getInt("settings.prices-per-page", 15));
         transactionCooldownMs = Math.max(0, getConfig().getInt("settings.transaction-cooldown-ms", 1500));
@@ -3872,10 +3873,89 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return floor.getType().isSolid() || feet.isLiquid();
     }
 
+    private void migrateItemServicePricing() {
+        int version = getConfig().getInt("settings.item-service-pricing-version", 0);
+        if (version >= 1) return;
+
+        // Upgrade the previous bundled defaults while preserving any other custom prices.
+        if (getConfig().getLong("settings.rename-cost", 2500L) == 2500L) {
+            getConfig().set("settings.rename-cost", 10000L);
+        }
+        if (getConfig().getLong("settings.repair-cost", 5000L) == 5000L) {
+            getConfig().set("settings.repair-cost", 10000L);
+        }
+        if (!getConfig().contains("settings.item-service-costs.valuable")) {
+            getConfig().set("settings.item-service-costs.valuable", 15000L);
+        }
+        if (!getConfig().contains("settings.item-service-costs.diamond")) {
+            getConfig().set("settings.item-service-costs.diamond", 20000L);
+        }
+        if (!getConfig().contains("settings.item-service-costs.rare")) {
+            getConfig().set("settings.item-service-costs.rare", 30000L);
+        }
+        if (!getConfig().contains("settings.item-service-costs.legendary")) {
+            getConfig().set("settings.item-service-costs.legendary", 50000L);
+        }
+        getConfig().set("settings.item-service-pricing-version", 1);
+        saveConfig();
+        getLogger().info("Migrated paid item service prices: normal $10,000; valuable $15,000; diamond $20,000; rare $30,000; legendary $50,000 (unless customized).");
+    }
+
+    private long itemServiceCost(Material material, boolean repair) {
+        long baseCost = repair ? repairCost : renameCost;
+        String tier = itemServiceTier(material);
+        if (tier == null) return baseCost;
+
+        long defaultCost = switch (tier) {
+            case "valuable" -> 15000L;
+            case "diamond" -> 20000L;
+            case "rare" -> 30000L;
+            case "legendary" -> 50000L;
+            default -> baseCost;
+        };
+        return Math.max(1L, getConfig().getLong("settings.item-service-costs." + tier, defaultCost));
+    }
+
+    private String itemServiceTier(Material material) {
+        String name = material.name();
+
+        if (Set.of(
+                "ELYTRA", "MACE", "DRAGON_EGG", "ENCHANTED_GOLDEN_APPLE", "HEAVY_CORE",
+                "NETHERITE_UPGRADE_SMITHING_TEMPLATE", "SILENCE_ARMOR_TRIM_SMITHING_TEMPLATE"
+        ).contains(name)) {
+            return "legendary";
+        }
+
+        if (name.startsWith("NETHERITE_")
+                || name.endsWith("_SHULKER_BOX")
+                || name.endsWith("_ARMOR_TRIM_SMITHING_TEMPLATE")
+                || Set.of(
+                        "TRIDENT", "TOTEM_OF_UNDYING", "BEACON", "CONDUIT", "NETHER_STAR",
+                        "SHULKER_SHELL", "DRAGON_HEAD", "WITHER_SKELETON_SKULL",
+                        "ANCIENT_DEBRIS", "HEART_OF_THE_SEA", "END_PORTAL_FRAME"
+                ).contains(name)) {
+            return "rare";
+        }
+
+        if (name.startsWith("DIAMOND_")
+                || Set.of("DIAMOND", "DIAMOND_BLOCK").contains(name)) {
+            return "diamond";
+        }
+
+        if (Set.of(
+                "EMERALD", "EMERALD_BLOCK", "GOLDEN_APPLE", "ENCHANTED_BOOK", "END_CRYSTAL",
+                "PRISMARINE_CRYSTALS", "NAUTILUS_SHELL", "MUSIC_DISC_PIGSTEP"
+        ).contains(name)) {
+            return "valuable";
+        }
+
+        return null;
+    }
+
     private void paidItemService(Player p, boolean repair, String rawName) {
-        long cost = repair ? repairCost : renameCost;
         ItemStack original = p.getInventory().getItemInMainHand().clone();
         if (original.getType().isAir()) { p.sendMessage(repair ? "§cHold a damaged item in your main hand." : "§cHold the item you want to rename."); return; }
+        long cost = itemServiceCost(original.getType(), repair);
         ItemStack updated = original.clone(); ItemMeta meta = updated.getItemMeta();
         if (meta == null) { p.sendMessage("§cThat item cannot be changed."); return; }
         if (repair) {
