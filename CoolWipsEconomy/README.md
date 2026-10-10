@@ -1,4 +1,4 @@
-# CoolWips Economy 1.4.12
+# CoolWips Economy 1.4.13
 
 Simple Paper 26.2 economy plugin for CoolWips SMP.
 
@@ -10,7 +10,7 @@ Requirements:
 
 Install:
 1. Build with build.bat.
-2. Put the built `target/CoolWipsEconomy-1.4.12.jar` in `plugins/`.
+2. Put the built `target/CoolWipsEconomy-1.4.13.jar` in `plugins/`.
 3. Start the server once.
 4. Open plugins/CoolWipsEconomy/config.yml.
 5. Put your UnbelievaBoat API token in api-token.
@@ -45,7 +45,7 @@ Important: never commit a real API token to a public GitHub repository.
 
 Paid item services: `/rename <new name>` renames the item in your main hand (supports `&` color codes), and `/repair` fully repairs a damaged item in your main hand. Both start at $10,000 for normal items, with higher fees for valuable items ($15,000), diamond items ($20,000), rare items such as netherite gear, elytra-adjacent gear, tridents, totems, beacons, and shulker boxes ($30,000), and legendary items such as elytra, maces, dragon eggs, enchanted golden apples, heavy cores, and the Silence trim template ($50,000). Base prices are configurable with `settings.rename-cost` and `settings.repair-cost`; rarity tier prices are configurable under `settings.item-service-costs`. On upgrade, old default fees are migrated to $10,000 automatically while custom values are preserved. Successful purchases are recorded in the economy ledger, and the plugin reverses payment if the held item changes before the service is applied.
 
-Mob purchases give custom, tagged spawn-egg tokens for later use. Right-click a block to spawn the purchased mob at that spot; the token is consumed only after a successful spawn. If an entity has no vanilla spawn-egg material, it uses a custom paper token. Purchases use the same UnbelievaBoat balance verification, per-player transaction lock, and refund path as item purchases. Mob prices are configured under `mob-shop`; `/buymob` lists available mobs, and purchases are recorded in the economy statistics and ledger.
+Mob purchases give custom, tagged paper tokens for later use. Right-click a block to spawn one purchased mob at that spot; the token is consumed only after a successful spawn. All tokens use paper rather than real spawn eggs, so players cannot turn mob tokens into spawner types for unlimited spawning. The plugin also rejects token use directly on normal or trial spawners, including older tokens issued as spawn eggs. Purchases use the same UnbelievaBoat balance verification, per-player transaction lock, and refund path as item purchases. Mob prices are configured under `mob-shop`; `/buymob` lists available mobs, and purchases are recorded in the economy statistics and ledger.
 
 Sales and purchases are serialized per player. The configured buy tax is applied to shop purchases. Player trades preserve the full ItemStack metadata. Items are removed only after UnbelievaBoat confirms payment. If the items disappear before removal, the plugin attempts to reverse the payment.
 
