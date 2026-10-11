@@ -4223,8 +4223,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             p.sendMessage("§cThat mob purchase is too large.");
             return;
         }
-        if (cost < 1 || cost > maxMoney) {
-            p.sendMessage("§cThat mob purchase must cost between $1 and $" + maxMoney + ".");
+        // maxMoney is the pre-tax transaction limit. Allow configured buy tax
+        // on top so a $1,000,000 Ender Dragon can still be purchased.
+        BigDecimal mobPurchaseLimitWithTax = BigDecimal.valueOf(maxMoney)
+                .multiply(BigDecimal.ONE.add(BigDecimal.valueOf(buyTax)))
+                .setScale(0, RoundingMode.CEILING);
+        if (cost < 1 || BigDecimal.valueOf(cost).compareTo(mobPurchaseLimitWithTax) > 0) {
+            p.sendMessage("§cThat mob purchase exceeds your maximum pre-tax limit of $" + maxMoney + " plus buy tax.");
             return;
         }
 
