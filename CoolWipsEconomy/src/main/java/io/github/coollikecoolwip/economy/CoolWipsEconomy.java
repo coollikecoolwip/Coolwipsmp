@@ -709,15 +709,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private Material marketAccountingMaterial(Material material) {
         if (material == null) return null;
         return switch (material) {
-            case GOLD_BLOCK, GOLD_NUGGET, GOLDEN_APPLE, GOLDEN_CARROT,
+            case GOLD_BLOCK, GOLD_NUGGET, RAW_GOLD, RAW_GOLD_BLOCK, GOLDEN_APPLE, GOLDEN_CARROT,
                  GOLDEN_HELMET, GOLDEN_CHESTPLATE, GOLDEN_LEGGINGS, GOLDEN_BOOTS,
                  GOLDEN_SWORD, GOLDEN_AXE, GOLDEN_PICKAXE, GOLDEN_SHOVEL, GOLDEN_HOE,
                  GOLDEN_SPEAR, LIGHT_WEIGHTED_PRESSURE_PLATE -> Material.GOLD_INGOT;
-            case IRON_BLOCK, IRON_NUGGET, IRON_HELMET, IRON_CHESTPLATE, IRON_LEGGINGS, IRON_BOOTS,
+            case IRON_BLOCK, IRON_NUGGET, RAW_IRON, RAW_IRON_BLOCK,
+                 IRON_HELMET, IRON_CHESTPLATE, IRON_LEGGINGS, IRON_BOOTS,
                  IRON_SWORD, IRON_AXE, IRON_PICKAXE, IRON_SHOVEL, IRON_HOE,
                  IRON_SPEAR, HEAVY_WEIGHTED_PRESSURE_PLATE, IRON_BARS, IRON_CHAIN,
                  IRON_DOOR, IRON_TRAPDOOR -> Material.IRON_INGOT;
-            case COPPER_BLOCK, COPPER_NUGGET, COPPER_HELMET, COPPER_CHESTPLATE,
+            case COPPER_BLOCK, COPPER_NUGGET, RAW_COPPER, RAW_COPPER_BLOCK,
+                 COPPER_HELMET, COPPER_CHESTPLATE,
                  COPPER_LEGGINGS, COPPER_BOOTS, COPPER_SWORD, COPPER_AXE, COPPER_PICKAXE,
                  COPPER_SHOVEL, COPPER_HOE, COPPER_SPEAR, COPPER_BARS, COPPER_CHAIN,
                  COPPER_LANTERN, COPPER_TORCH, COPPER_GRATE, COPPER_BULB, COPPER_DOOR,
@@ -803,8 +805,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return switch (material) {
             // Gold, iron and copper use ninths of an ingot so nuggets, ingots, blocks,
             // pressure plates and craftable gear all share the same market allowance.
-            case GOLD_INGOT, IRON_INGOT, COPPER_INGOT -> 9L;
-            case GOLD_BLOCK, IRON_BLOCK, COPPER_BLOCK, EXPOSED_COPPER, WEATHERED_COPPER, OXIDIZED_COPPER,
+            case GOLD_INGOT, IRON_INGOT, COPPER_INGOT, RAW_GOLD, RAW_IRON, RAW_COPPER -> 9L;
+            case GOLD_BLOCK, IRON_BLOCK, COPPER_BLOCK, RAW_GOLD_BLOCK, RAW_IRON_BLOCK, RAW_COPPER_BLOCK,
+                 EXPOSED_COPPER, WEATHERED_COPPER, OXIDIZED_COPPER,
                  WAXED_COPPER_BLOCK, WAXED_EXPOSED_COPPER, WAXED_WEATHERED_COPPER, WAXED_OXIDIZED_COPPER -> 81L;
             case GOLD_NUGGET, IRON_NUGGET, COPPER_NUGGET, BLAZE_POWDER -> 1L;
             case GOLDEN_APPLE -> 72L;
@@ -5014,8 +5017,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (gross == null || gross.signum() <= 0) return 0L;
         BigDecimal multiplier = BigDecimal.ONE.subtract(BigDecimal.valueOf(tax));
         try {
+            // Balances use whole dollars. Round seller payouts down so repeated
+            // sub-dollar transactions cannot create money through rounding.
             return Math.max(0, gross.multiply(multiplier)
-                    .setScale(0, RoundingMode.HALF_UP)
+                    .setScale(0, RoundingMode.DOWN)
                     .longValueExact());
         } catch (ArithmeticException e) {
             getLogger().severe("Rejected economy payout because it overflowed the long range.");
