@@ -4448,6 +4448,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Player player = event.getPlayer();
         var targetBlock = event.getClickedBlock().getRelative(event.getBlockFace());
         var world = targetBlock.getWorld();
+        if (type == EntityType.ENDER_DRAGON
+                && world.getEnvironment() != org.bukkit.World.Environment.THE_END) {
+            player.sendMessage("§cThe Ender Dragon can only be placed in The End. Your token was not used.");
+            return;
+        }
         if (!world.isChunkLoaded(targetBlock.getX() >> 4, targetBlock.getZ() >> 4)) {
             player.sendMessage("§cThat location is not loaded. Try placing the mob token somewhere else.");
             return;
