@@ -1,5 +1,5 @@
 # CoolWips Economy sell-price schedule
-# Base sell prices come from prices.txt; per-player dynamic market rules come from market.txt.
+# Base sell prices come from prices.txt; per-player market rules come from market.txt.
 # Ordinary stackable farm items receive at least four stacks at their base rate before decay; premium rare drops are exceptions.
 # Rows marked * share the named parent material's per-player market counter; thresholds are in parent-material equivalents.
 # Crafted and stripped variants share volume to prevent changing item form from bypassing a price drop.
@@ -34,17 +34,17 @@ AZURE_BLUET | $0.3 | DYNAMIC:VERY_FAST | 1365 | 341 | -90% | $0.001
 BAKED_POTATO | $0.75 | DYNAMIC:FAST | 1600 | 400 | -80% | $0.017
 BAMBOO | $1.2 | DYNAMIC:VERY_FAST | 1333 | 333 | -90% | $0.001
 BAMBOO_BLOCK | $2.25 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
-BAMBOO_DOOR | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_FENCE | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_FENCE_GATE | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_HANGING_SIGN | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_MOSAIC | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_MOSAIC_SLAB | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_PLANKS | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_PRESSURE_PLATE | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_SIGN | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_SLAB | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
-BAMBOO_TRAPDOOR | $3 | DYNAMIC:MEDIUM | 608 | 152 | -65% | $0.017
+BAMBOO_DOOR | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_FENCE | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_FENCE_GATE | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_HANGING_SIGN | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_MOSAIC | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_MOSAIC_SLAB | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_PLANKS | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_PRESSURE_PLATE | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_SIGN | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_SLAB | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_TRAPDOOR | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
 BARREL | $16 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 BASALT | $2 | STATIC | - | - | - | -
 BEACON | $9200 | STATIC | - | - | - | -
