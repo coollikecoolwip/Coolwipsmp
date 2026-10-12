@@ -95,7 +95,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // These materials are permanently static: the market system is never allowed to
     // apply a volume multiplier, floor, or market ledger to them.
     private static final Set<Material> STATIC_MARKET_MATERIALS = EnumSet.of(
-            Material.DIAMOND, Material.DIAMOND_BLOCK, Material.EMERALD_BLOCK
+            Material.DIAMOND, Material.DIAMOND_BLOCK
     );
 
     private static final long DEFAULT_MARKET_FREE_UNITS = 2048L;
@@ -104,7 +104,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private static final BigDecimal DEFAULT_MARKET_MIN_PRICE = new BigDecimal("0.017");
 
     private static final Set<Material> FARM_INCOME_MATERIALS = EnumSet.of(
-            Material.IRON_INGOT, Material.GOLD_INGOT, Material.GOLD_BLOCK, Material.REDSTONE, Material.LAPIS_LAZULI, Material.EMERALD, Material.COPPER_INGOT,
+            Material.IRON_INGOT, Material.IRON_BLOCK, Material.GOLD_INGOT, Material.GOLD_BLOCK,
+            Material.COPPER_INGOT, Material.COPPER_BLOCK, Material.REDSTONE, Material.REDSTONE_BLOCK,
+            Material.LAPIS_LAZULI, Material.LAPIS_BLOCK, Material.EMERALD, Material.EMERALD_BLOCK,
             Material.WHEAT, Material.WHEAT_SEEDS, Material.CARROT, Material.POTATO, Material.BEETROOT,
             Material.MELON_SLICE, Material.MELON, Material.PUMPKIN, Material.SUGAR_CANE, Material.BAMBOO,
             Material.BAMBOO_BLOCK, Material.CACTUS, Material.COCOA_BEANS, Material.NETHER_WART,
@@ -676,12 +678,120 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // Gold blocks are nine gold ingots compressed into one item. Track both forms
     // against the same per-player gold-ingot volume so crafting blocks cannot bypass
     // the daily price drop. Block payouts are capped at the configured block base price.
+    // Craftable output forms share their ingredient's daily market counter.
+    // Accounting units are expressed in ingredient equivalents. One gold block consumes
+    // nine ingot units; 2 moss blocks and 3 moss carpets consume the same six subunits.
     private Material marketAccountingMaterial(Material material) {
-        return material == Material.GOLD_BLOCK ? Material.GOLD_INGOT : material;
+        if (material == null) return null;
+        return switch (material) {
+            case GOLD_BLOCK -> Material.GOLD_INGOT;
+            case IRON_BLOCK -> Material.IRON_INGOT;
+            case COPPER_BLOCK -> Material.COPPER_INGOT;
+            case REDSTONE_BLOCK -> Material.REDSTONE;
+            case LAPIS_BLOCK -> Material.LAPIS_LAZULI;
+            case EMERALD_BLOCK -> Material.EMERALD;
+            case DRIED_KELP_BLOCK -> Material.DRIED_KELP;
+            case NETHER_WART_BLOCK -> Material.NETHER_WART;
+            case BONE_BLOCK -> Material.BONE;
+            case SLIME_BLOCK -> Material.SLIME_BALL;
+            case HAY_BLOCK -> Material.WHEAT;
+            case BAMBOO_BLOCK -> Material.BAMBOO;
+            case HONEY_BLOCK -> Material.HONEY_BOTTLE;
+            case HONEYCOMB_BLOCK -> Material.HONEYCOMB;
+            case MELON -> Material.MELON_SLICE;
+            case MOSS_CARPET -> Material.MOSS_BLOCK;
+            default -> material;
+        };
+    }
+
+    private long marketAccountingUnitsPerItem(Material material) {
+        if (material == null) return 1L;
+        return switch (material) {
+            case GOLD_BLOCK, IRON_BLOCK, COPPER_BLOCK, REDSTONE_BLOCK, LAPIS_BLOCK, EMERALD_BLOCK,
+                 DRIED_KELP_BLOCK, NETHER_WART_BLOCK, SLIME_BLOCK, HAY_BLOCK, BAMBOO_BLOCK, MELON -> 9L;
+            case BONE_BLOCK -> 3L;
+            case HONEY_BLOCK, HONEYCOMB_BLOCK -> 4L;
+            case MOSS_BLOCK -> 3L;
+            case MOSS_CARPET -> 2L;
+            default -> 1L;
+        };
     }
 
     private long marketAccountingUnits(Material material, int amount) {
-        return material == Material.GOLD_BLOCK ? Math.multiplyExact((long) amount, 9L) : amount;
+        return Math.multiplyExact((long) amount, marketAccountingUnitsPerItem(material));
+    }
+
+    // Moss uses thirds of a moss block so 2 blocks and 3 carpets account for equal volume.
+    private long marketAccountingScale(Material accountingMaterial) {
+        return accountingMaterial == Material.MOSS_BLOCK ? 3L : 1L;
+    }
+
+    private BigDecimal marketAccountingUnitPrice(UUID owner, Material accountingMaterial, long soldUnits) {
+        BigDecimal base = prices.get(accountingMaterial);
+        if (base == null) return BigDecimal.ZERO;
+
+        long scale = marketAccountingScale(accountingMaterial);
+        BigDecimal unitBase = base.divide(BigDecimal.valueOf(scale), 12, RoundingMode.HALF_UP);
+        if (isStaticMarketMaterial(accountingMaterial) || !isFarmIncomeMaterial(accountingMaterial)) {
+            return unitBase;
+        }
+
+        MarketRule rule = marketRuleFor(accountingMaterial);
+        if (rule == null || rule.stepUnits() <= 0 || rule.dropPercent().signum() <= 0) {
+            return unitBase;
+        }
+
+        long fullUnits = Math.multiplyExact(rule.fullPriceUnits(), scale);
+        if (soldUnits < fullUnits) return unitBase;
+
+        long stepUnits = Math.multiplyExact(rule.stepUnits(), scale);
+        long steps = 1L + (soldUnits - fullUnits) / stepUnits;
+        BigDecimal multiplier = BigDecimal.ONE.subtract(rule.dropPercent())
+                .pow((int) Math.min(steps, 1000L));
+        BigDecimal price = unitBase.multiply(multiplier);
+        BigDecimal floor = rule.minPrice().divide(BigDecimal.valueOf(scale), 12, RoundingMode.HALF_UP)
+                .max(BigDecimal.ZERO).min(unitBase);
+        if (price.compareTo(floor) < 0) price = floor;
+        return price;
+    }
+
+    private BigDecimal marketGrossForAccountingUnits(UUID owner, Material accountingMaterial,
+                                                      long soldUnits, long amountUnits) {
+        if (amountUnits <= 0) return BigDecimal.ZERO;
+        BigDecimal base = prices.get(accountingMaterial);
+        if (base == null) return BigDecimal.ZERO;
+
+        long scale = marketAccountingScale(accountingMaterial);
+        MarketRule rule = marketRuleFor(accountingMaterial);
+        long fullUnits = rule == null ? Long.MAX_VALUE : Math.multiplyExact(rule.fullPriceUnits(), scale);
+        long stepUnits = rule == null ? Long.MAX_VALUE : Math.multiplyExact(rule.stepUnits(), scale);
+        boolean dynamic = !isStaticMarketMaterial(accountingMaterial)
+                && isFarmIncomeMaterial(accountingMaterial)
+                && rule != null && rule.stepUnits() > 0 && rule.dropPercent().signum() > 0;
+
+        if (!dynamic) {
+            return base.divide(BigDecimal.valueOf(scale), 12, RoundingMode.HALF_UP)
+                    .multiply(BigDecimal.valueOf(amountUnits));
+        }
+
+        long remaining = amountUnits;
+        long cursor = soldUnits;
+        BigDecimal gross = BigDecimal.ZERO;
+        while (remaining > 0) {
+            BigDecimal unit = marketAccountingUnitPrice(owner, accountingMaterial, cursor);
+            long nextBoundary;
+            if (cursor < fullUnits) {
+                nextBoundary = fullUnits;
+            } else {
+                long stepIndex = (cursor - fullUnits) / stepUnits;
+                nextBoundary = Math.addExact(fullUnits, Math.multiplyExact(stepIndex + 1L, stepUnits));
+            }
+            long chunk = Math.min(remaining, Math.max(1L, nextBoundary - cursor));
+            gross = gross.add(unit.multiply(BigDecimal.valueOf(chunk)));
+            cursor = Math.addExact(cursor, chunk);
+            remaining -= chunk;
+        }
+        return gross;
     }
 
     private BigDecimal marketUnitPrice(Material material, long sold) {
@@ -691,23 +801,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketUnitPrice(UUID owner, Material material, long sold) {
         BigDecimal base = prices.get(material);
         if (base == null || isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) return base;
-        if (material == Material.GOLD_BLOCK) {
-            return marketGrossForSale(owner, Material.GOLD_INGOT, sold, 9).min(base);
-        }
-
-        MarketRule rule = marketRuleFor(material);
-        if (rule == null || sold < rule.fullPriceUnits()
-                || rule.stepUnits() <= 0 || rule.dropPercent().signum() <= 0) {
-            return base;
-        }
-
-        long steps = 1L + (sold - rule.fullPriceUnits()) / rule.stepUnits();
-        BigDecimal multiplier = BigDecimal.ONE.subtract(rule.dropPercent())
-                .pow((int) Math.min(steps, 1000L));
-        BigDecimal price = base.multiply(multiplier);
-        BigDecimal floor = rule.minPrice().max(BigDecimal.ZERO).min(base);
-        if (base.compareTo(floor) > 0 && price.compareTo(floor) < 0) price = floor;
-        return price;
+        Material accountingMaterial = marketAccountingMaterial(material);
+        long unitsPerItem = marketAccountingUnitsPerItem(material);
+        return marketGrossForAccountingUnits(owner, accountingMaterial, sold, unitsPerItem).min(base);
     }
 
     private BigDecimal marketGrossForSale(Material material, long sold, int amount) {
@@ -717,38 +813,19 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private BigDecimal marketGrossForSale(UUID owner, Material material, long sold, int amount) {
         BigDecimal base = prices.get(material);
         if (base == null || amount <= 0) return BigDecimal.ZERO;
-        if (isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) return base.multiply(BigDecimal.valueOf(amount));
-        if (material == Material.GOLD_BLOCK) {
-            BigDecimal gross = BigDecimal.ZERO;
-            long cursor = sold;
-            for (int i = 0; i < amount; i++) {
-                BigDecimal blockValue = marketGrossForSale(owner, Material.GOLD_INGOT, cursor, 9).min(base);
-                gross = gross.add(blockValue);
-                cursor = Math.addExact(cursor, 9L);
-            }
-            return gross;
+        if (isStaticMarketMaterial(material) || !isFarmIncomeMaterial(material)) {
+            return base.multiply(BigDecimal.valueOf(amount));
         }
 
-        MarketRule rule = marketRuleFor(material);
-        if (rule == null) return base.multiply(BigDecimal.valueOf(amount));
-
-        long full = rule.fullPriceUnits(), step = rule.stepUnits();
-        if (step <= 0) return base.multiply(BigDecimal.valueOf(amount));
-
-        long remaining = amount, cursor = sold;
+        Material accountingMaterial = marketAccountingMaterial(material);
+        long unitsPerItem = marketAccountingUnitsPerItem(material);
+        long cursor = sold;
         BigDecimal gross = BigDecimal.ZERO;
-        while (remaining > 0) {
-            BigDecimal unit = marketUnitPrice(owner, material, cursor);
-            long nextBoundary;
-            if (cursor < full) nextBoundary = full;
-            else {
-                long stepIndex = (cursor - full) / step;
-                nextBoundary = full + Math.multiplyExact(stepIndex + 1L, step);
-            }
-            long chunk = Math.min(remaining, Math.max(1L, nextBoundary - cursor));
-            gross = gross.add(unit.multiply(BigDecimal.valueOf(chunk)));
-            cursor += chunk;
-            remaining -= chunk;
+        for (int i = 0; i < amount; i++) {
+            BigDecimal itemGross = marketGrossForAccountingUnits(owner, accountingMaterial, cursor, unitsPerItem)
+                    .min(base);
+            gross = gross.add(itemGross);
+            cursor = Math.addExact(cursor, unitsPerItem);
         }
         return gross;
     }
@@ -817,11 +894,17 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             Map<Material, Long> newTotals = new HashMap<>();
 
             List<Map.Entry<Material, Integer>> orderedEntries = new ArrayList<>(amounts.entrySet());
-            // Consume shared gold volume deterministically: blocks first, then loose ingots.
-            orderedEntries.sort(Comparator
-                    .comparingInt((Map.Entry<Material, Integer> e) -> e.getKey() == Material.GOLD_BLOCK ? 0
-                            : e.getKey() == Material.GOLD_INGOT ? 1 : 2)
-                    .thenComparing(e -> e.getKey().name()));
+            // Process conversion outputs before ingredients so shared volume is reserved deterministically.
+            orderedEntries.sort((left, right) -> {
+                int byAccountingMaterial = marketAccountingMaterial(left.getKey()).name()
+                        .compareTo(marketAccountingMaterial(right.getKey()).name());
+                if (byAccountingMaterial != 0) return byAccountingMaterial;
+                int byEquivalentUnits = Long.compare(
+                        marketAccountingUnitsPerItem(right.getKey()),
+                        marketAccountingUnitsPerItem(left.getKey()));
+                if (byEquivalentUnits != 0) return byEquivalentUnits;
+                return left.getKey().name().compareTo(right.getKey().name());
+            });
 
             for (Map.Entry<Material, Integer> entry : orderedEntries) {
                 Material material = entry.getKey();
