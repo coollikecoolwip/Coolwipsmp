@@ -720,7 +720,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case BONE_BLOCK -> Material.BONE;
             case SLIME_BLOCK -> Material.SLIME_BALL;
             case HAY_BLOCK -> Material.WHEAT;
-            case BAMBOO_BLOCK, STRIPPED_BAMBOO_BLOCK -> Material.BAMBOO;
+            case BAMBOO_BLOCK, STRIPPED_BAMBOO_BLOCK, BAMBOO_PLANKS, BAMBOO_MOSAIC,
+                 BAMBOO_SIGN, BAMBOO_HANGING_SIGN, BAMBOO_PRESSURE_PLATE, BAMBOO_TRAPDOOR,
+                 BAMBOO_SLAB, BAMBOO_MOSAIC_SLAB, BAMBOO_FENCE_GATE, BAMBOO_FENCE, BAMBOO_DOOR -> Material.BAMBOO;
             case HONEY_BLOCK -> Material.HONEY_BOTTLE;
             case HONEYCOMB_BLOCK -> Material.HONEYCOMB;
             case MELON -> Material.MELON_SLICE;
@@ -761,6 +763,13 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case GOLD_BLOCK, IRON_BLOCK, COPPER_BLOCK, REDSTONE_BLOCK, LAPIS_BLOCK, EMERALD_BLOCK,
                  DRIED_KELP_BLOCK, NETHER_WART_BLOCK, SLIME_BLOCK, HAY_BLOCK, MELON -> 9L;
             case BAMBOO_BLOCK, STRIPPED_BAMBOO_BLOCK -> 36L;
+            case BAMBOO_PLANKS, BAMBOO_MOSAIC -> 18L;
+            case BAMBOO_SIGN, BAMBOO_PRESSURE_PLATE, BAMBOO_FENCE_GATE, BAMBOO_DOOR -> 36L;
+            case BAMBOO_HANGING_SIGN -> 108L;
+            case BAMBOO_TRAPDOOR -> 54L;
+            case BAMBOO_SLAB -> 9L;
+            case BAMBOO_MOSAIC_SLAB -> 6L;
+            case BAMBOO_FENCE -> 24L;
             case BONE_BLOCK -> 3L;
             case HONEY_BLOCK, HONEYCOMB_BLOCK -> 4L;
             case MOSS_BLOCK -> 3L;
