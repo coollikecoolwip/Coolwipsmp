@@ -4,8 +4,9 @@
 # Price steps for ordinary items are at least 64 units; premium rare drops keep smaller quotas to avoid outsized payouts.
 # Gold ingots use 256 full-price units, then a 50% price drop per additional 128 gold-equivalent units.
 # Crafted forms share their ingredient's per-player counter; see CoolWipsEconomy.java for conversion ratios.
-# Metal nuggets, ingots, blocks, pressure plates, tools and crafted copper variants share ingot-equivalent counters.
-# Ingot parents count ninth-ingot subunits; gold/iron/copper blocks count 81 subunits each. This change intentionally resets old market-volume counters.
+# Metal nuggets, raw metals, ingots, blocks, pressure plates, tools and crafted copper variants share ingot-equivalent counters.
+# Ingot parents count ninth-ingot subunits; gold/iron/copper blocks count 81 subunits each.
+# Legacy raw-item counters are ignored after these items are mapped to the parent ingot counter; existing parent ingot volume remains active.
 # Floors: $0.017 standard, $0.05 premium rare drops.
 DEFAULT=2048,512,0.65,0.017
 ACACIA_DOOR=656,164,0.65,0.017
