@@ -771,11 +771,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case BAMBOO_MOSAIC_SLAB -> 6L;
             case BAMBOO_FENCE -> 24L;
             case BONE -> 3L;
-            case BONE_BLOCK -> 9L;
+            case BONE_BLOCK -> 27L;
             case BONE_MEAL -> 1L;
             case HONEY_BLOCK, HONEYCOMB_BLOCK -> 4L;
-            case MOSS_BLOCK -> 3L;
-            case MOSS_CARPET -> 2L;
+            case MOSS_BLOCK -> 2L;
+            case MOSS_CARPET -> 1L;
             default -> woodAccountingUnitsPerItem(material);
         };
     }
@@ -784,9 +784,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return Math.multiplyExact((long) amount, marketAccountingUnitsPerItem(material));
     }
 
-    // Moss uses thirds of a moss block so 2 blocks and 3 carpets account for equal volume.
+    // Moss uses half-block units so one moss block and two moss carpets share equal volume.
+    // Bone uses bone-meal subunits: one bone = three bone meal; one bone block = nine bones.
     private long marketAccountingScale(Material accountingMaterial) {
-        if (accountingMaterial == Material.MOSS_BLOCK) return 3L;
+        if (accountingMaterial == Material.MOSS_BLOCK) return 2L;
         if (accountingMaterial == Material.BONE) return 3L;
         if (accountingMaterial == Material.BAMBOO) return 4L;
         String name = accountingMaterial == null ? "" : accountingMaterial.name();
