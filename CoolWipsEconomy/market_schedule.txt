@@ -382,8 +382,8 @@ GOLDEN_CARROT | $60 | STATIC | - | - | - | -
 GOLDEN_DANDELION | $2 | STATIC | - | - | - | -
 GOLDEN_PICKAXE | $60 | STATIC | - | - | - | -
 GOLDEN_SWORD | $45 | STATIC | - | - | - | -
-GOLD_BLOCK | $850 | STATIC | - | - | - | -
-GOLD_INGOT | $100 | DYNAMIC:VERY_FAST | 16 | 8 | -90% | $0.001
+GOLD_BLOCK | $850 | DYNAMIC:SLOW* | 24 | 12 | -50% | $0.017
+GOLD_INGOT | $100 | DYNAMIC:SLOW | 24 | 12 | -50% | $0.017
 GOLD_NUGGET | $2 | STATIC | - | - | - | -
 GOLD_ORE | $19.2 | STATIC | - | - | - | -
 GRANITE | $2 | STATIC | - | - | - | -
