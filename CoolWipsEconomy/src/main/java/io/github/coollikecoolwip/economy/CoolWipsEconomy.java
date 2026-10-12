@@ -3174,12 +3174,23 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 Material accountingMaterial = marketAccountingMaterial(material);
                 long soldAmount = sold.getOrDefault(accountingMaterial, 0L);
                 long peakAmount = peak.getOrDefault(accountingMaterial, 0L);
+                long scale = marketAccountingScale(accountingMaterial);
+                BigDecimal soldEquivalent = BigDecimal.valueOf(soldAmount)
+                        .divide(BigDecimal.valueOf(scale), 2, RoundingMode.HALF_UP).stripTrailingZeros();
+                BigDecimal peakEquivalent = BigDecimal.valueOf(peakAmount)
+                        .divide(BigDecimal.valueOf(scale), 2, RoundingMode.HALF_UP).stripTrailingZeros();
                 BigDecimal current = currentSellPrice(uuid, material);
                 sender.sendMessage("§6Market: §f" + target.getName() + " §7/ §f" + pretty(material));
-                sender.sendMessage(material == Material.GOLD_INGOT || material == Material.GOLD_BLOCK
-                        ? "§7Sold today (gold-equivalent units; 9 per block): §f" + soldAmount
-                        : "§7Sold today: §f" + soldAmount);
-                sender.sendMessage("§7Peak volume: §f" + peakAmount);
+                if (accountingMaterial.equals(material) && scale == 1L) {
+                    sender.sendMessage("§7Sold today: §f" + soldAmount);
+                    sender.sendMessage("§7Peak volume: §f" + peakAmount);
+                } else {
+                    String equivalentLabel = pretty(accountingMaterial) + " equivalent";
+                    sender.sendMessage("§7Sold today (" + equivalentLabel + "): §f"
+                            + soldEquivalent.toPlainString());
+                    sender.sendMessage("§7Peak volume (" + equivalentLabel + "): §f"
+                            + peakEquivalent.toPlainString());
+                }
                 sender.sendMessage("§7Current sell price: §a$" +
                         (current == null ? "N/A" : current.stripTrailingZeros().toPlainString()));
                 return;
