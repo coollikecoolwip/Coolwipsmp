@@ -651,6 +651,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private boolean isFarmIncomeMaterial(Material material) {
         if (material == null) return false;
         if (FARM_INCOME_MATERIALS.contains(material)) return true;
+        Material accountingMaterial = marketAccountingMaterial(material);
+        if (accountingMaterial != null && !accountingMaterial.equals(material)) {
+            return isFarmIncomeMaterial(accountingMaterial);
+        }
         String name = material.name();
         for (String prefix : FARM_WOOD_PREFIXES) {
             if (name.startsWith(prefix + "_") || name.equals(prefix)) return true;
