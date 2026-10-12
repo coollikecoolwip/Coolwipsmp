@@ -717,7 +717,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case EMERALD_BLOCK -> Material.EMERALD;
             case DRIED_KELP_BLOCK -> Material.DRIED_KELP;
             case NETHER_WART_BLOCK -> Material.NETHER_WART;
-            case BONE_BLOCK -> Material.BONE;
+            case BONE_MEAL, BONE_BLOCK -> Material.BONE;
             case SLIME_BLOCK -> Material.SLIME_BALL;
             case HAY_BLOCK -> Material.WHEAT;
             case BAMBOO_BLOCK, STRIPPED_BAMBOO_BLOCK, BAMBOO_PLANKS, BAMBOO_MOSAIC,
@@ -770,7 +770,9 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case BAMBOO_SLAB -> 9L;
             case BAMBOO_MOSAIC_SLAB -> 6L;
             case BAMBOO_FENCE -> 24L;
-            case BONE_BLOCK -> 3L;
+            case BONE -> 3L;
+            case BONE_BLOCK -> 9L;
+            case BONE_MEAL -> 1L;
             case HONEY_BLOCK, HONEYCOMB_BLOCK -> 4L;
             case MOSS_BLOCK -> 3L;
             case MOSS_CARPET -> 2L;
@@ -785,6 +787,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // Moss uses thirds of a moss block so 2 blocks and 3 carpets account for equal volume.
     private long marketAccountingScale(Material accountingMaterial) {
         if (accountingMaterial == Material.MOSS_BLOCK) return 3L;
+        if (accountingMaterial == Material.BONE) return 3L;
         if (accountingMaterial == Material.BAMBOO) return 4L;
         String name = accountingMaterial == null ? "" : accountingMaterial.name();
         if (name.endsWith("_LOG") || name.endsWith("_STEM")) return 12L;
