@@ -356,7 +356,7 @@ SHEARS=500
 
 ELYTRA=50000
 # High-value money sinks
-TOTEM_OF_UNDYING=7500
+TOTEM_OF_UNDYING=1000
 
 # Ores / ingots / blocks convenience money sinks
 # Prices are intentionally above their sell value or crafting value so mining/crafting remains cheaper.
@@ -594,6 +594,6 @@ ENDER_PEARL=2500
 GOLDEN_APPLE=2500
 RESPAWN_ANCHOR=15000
 GLOWSTONE=1000
-EXPERIENCE_BOTTLE=1000
+EXPERIENCE_BOTTLE=100
 COBWEB=1500
-SHIELD=10000
+SHIELD=500
