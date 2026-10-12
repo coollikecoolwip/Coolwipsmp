@@ -1,7 +1,7 @@
 # CoolWips Economy sell-price schedule
-# Base sell prices come from prices.txt; per-player market rules come from market.txt.
+# Base sell prices come from prices.txt; per-player dynamic market rules come from market.txt.
 # Ordinary stackable farm items receive at least four stacks at their base rate before decay; premium rare drops are exceptions.
-# Rows marked * share the named parent material's per-player market counter; thresholds are in parent-material equivalents.
+# Rows marked * share the named parent material's per-player market counter; thresholds/settings are expressed in parent-material equivalents.
 # Crafted and stripped variants share volume to prevent changing item form from bypassing a price drop.
 # MATERIAL | BASE_SELL | MARKET | FULL_PRICE_SALES | STEP_SALES | DROP_PER_STEP | FLOOR
 ACACIA_DOOR | $2.8 | DYNAMIC:MEDIUM | 656 | 164 | -65% | $0.017
@@ -33,7 +33,7 @@ AZALEA_LEAVES | $0.6 | DYNAMIC:VERY_FAST | 1333 | 333 | -90% | $0.001
 AZURE_BLUET | $0.3 | DYNAMIC:VERY_FAST | 1365 | 341 | -90% | $0.001
 BAKED_POTATO | $0.75 | DYNAMIC:FAST | 1600 | 400 | -80% | $0.017
 BAMBOO | $1.2 | DYNAMIC:VERY_FAST | 1333 | 333 | -90% | $0.001
-BAMBOO_BLOCK | $2.25 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+BAMBOO_BLOCK | $6 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
 BAMBOO_DOOR | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
 BAMBOO_FENCE | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
 BAMBOO_FENCE_GATE | $3 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
@@ -99,7 +99,7 @@ BLUE_WOOL | $9 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 BOLT_ARMOR_TRIM_SMITHING_TEMPLATE | $2500 | STATIC | - | - | - | -
 BONE | $0.5 | DYNAMIC:FAST | 1638 | 410 | -80% | $0.017
 BONE_BLOCK | $1.5 | DYNAMIC:FAST* | 1638 | 410 | -80% | $0.017
-BONE_MEAL | $0.05 | DYNAMIC:FAST | 2458 | 614 | -80% | $0.017
+BONE_MEAL | $0.05 | DYNAMIC:FAST* | 1638 | 410 | -80% | $0.017
 BOOK | $9 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 BOOKSHELF | $24 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 BRAIN_CORAL | $2 | STATIC | - | - | - | -
@@ -175,7 +175,7 @@ CLAY | $10 | STATIC | - | - | - | -
 CLAY_BALL | $3 | STATIC | - | - | - | -
 CLOSED_EYEBLOSSOM | $0.3 | DYNAMIC:VERY_FAST | 1365 | 341 | -90% | $0.001
 COAL | $9 | STATIC | - | - | - | -
-COAL_BLOCK | $45 | STATIC | - | - | - | -
+COAL_BLOCK | $81 | STATIC | - | - | - | -
 COAL_ORE | $19.2 | STATIC | - | - | - | -
 COARSE_DIRT | $2 | STATIC | - | - | - | -
 COBBLED_DEEPSLATE | $2 | STATIC | - | - | - | -
@@ -202,7 +202,7 @@ COOKED_RABBIT | $12 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 COOKED_SALMON | $9 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 COOKIE | $4 | DYNAMIC:FAST | 304 | 76 | -80% | $0.017
 COPPER_BARS | $3.75 | STATIC | - | - | - | -
-COPPER_BLOCK | $85 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
+COPPER_BLOCK | $90 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 COPPER_BULB | $20.8 | STATIC | - | - | - | -
 COPPER_CHAIN | $2 | STATIC | - | - | - | -
 COPPER_CHEST | $82.5 | STATIC | - | - | - | -
@@ -309,7 +309,7 @@ DEEPSLATE_TILE_WALL | $2 | STATIC | - | - | - | -
 DETECTOR_RAIL | $16 | STATIC | - | - | - | -
 DIAMOND | $1000 | STATIC | - | - | - | -
 DIAMOND_AXE | $1080 | STATIC | - | - | - | -
-DIAMOND_BLOCK | $8500 | STATIC | - | - | - | -
+DIAMOND_BLOCK | $9000 | STATIC | - | - | - | -
 DIAMOND_HOE | $675 | STATIC | - | - | - | -
 DIAMOND_ORE | $37.5 | STATIC | - | - | - | -
 DIAMOND_PICKAXE | $1147.5 | STATIC | - | - | - | -
@@ -329,7 +329,7 @@ DROPPER | $45 | STATIC | - | - | - | -
 EGG | $0.25 | DYNAMIC:FAST | 1638 | 410 | -80% | $0.017
 ELYTRA | $30000 | STATIC | - | - | - | -
 EMERALD | $100 | DYNAMIC:MEDIUM | 256 | 64 | -65% | $0.017
-EMERALD_BLOCK | $850 | DYNAMIC:MEDIUM* | 256 | 64 | -65% | $0.017
+EMERALD_BLOCK | $900 | DYNAMIC:MEDIUM* | 256 | 64 | -65% | $0.017
 ENCHANTED_GOLDEN_APPLE | $11000 | STATIC | - | - | - | -
 ENCHANTING_TABLE | $39 | STATIC | - | - | - | -
 ENDER_CHEST | $100.5 | STATIC | - | - | - | -
@@ -383,7 +383,7 @@ GOLDEN_CARROT | $60 | STATIC | - | - | - | -
 GOLDEN_DANDELION | $2 | STATIC | - | - | - | -
 GOLDEN_PICKAXE | $60 | STATIC | - | - | - | -
 GOLDEN_SWORD | $45 | STATIC | - | - | - | -
-GOLD_BLOCK | $850 | DYNAMIC:SLOW* | 256 | 128 | -50% | $0.017
+GOLD_BLOCK | $900 | DYNAMIC:SLOW* | 256 | 128 | -50% | $0.017
 GOLD_INGOT | $100 | DYNAMIC:SLOW | 256 | 128 | -50% | $0.017
 GOLD_NUGGET | $2 | STATIC | - | - | - | -
 GOLD_ORE | $19.2 | STATIC | - | - | - | -
@@ -415,7 +415,7 @@ GUNPOWDER | $1.25 | DYNAMIC:FAST | 960 | 240 | -80% | $0.017
 GUSTER_BANNER_PATTERN | $1875 | STATIC | - | - | - | -
 GUSTER_POTTERY_SHERD | $337.5 | STATIC | - | - | - | -
 HANGING_ROOTS | $0.3 | DYNAMIC:VERY_FAST | 1365 | 341 | -90% | $0.001
-HAY_BLOCK | $10 | DYNAMIC:VERY_FAST* | 640 | 160 | -90% | $0.001
+HAY_BLOCK | $22.5 | DYNAMIC:VERY_FAST* | 640 | 160 | -90% | $0.001
 HEAVY_CORE | $300000 | STATIC | - | - | - | -
 HONEYCOMB | $6 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 HONEYCOMB_BLOCK | $15 | DYNAMIC:FAST* | 256 | 64 | -80% | $0.017
@@ -429,7 +429,7 @@ ICE | $2 | STATIC | - | - | - | -
 INFESTED_DEEPSLATE | $10.8 | STATIC | - | - | - | -
 INK_SAC | $0.6 | DYNAMIC:SLOW | 1365 | 341 | -50% | $0.017
 IRON_AXE | $8 | STATIC | - | - | - | -
-IRON_BLOCK | $250 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
+IRON_BLOCK | $270 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 IRON_BOOTS | $8 | STATIC | - | - | - | -
 IRON_CHESTPLATE | $14.4 | STATIC | - | - | - | -
 IRON_DOOR | $4 | STATIC | - | - | - | -
@@ -460,7 +460,7 @@ JUNGLE_WOOD | $10.5 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 KELP | $1 | DYNAMIC:VERY_FAST | 1600 | 400 | -90% | $0.001
 LADDER | $2 | STATIC | - | - | - | -
 LANTERN | $22.4 | STATIC | - | - | - | -
-LAPIS_BLOCK | $81 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
+LAPIS_BLOCK | $108 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 LAPIS_LAZULI | $12 | DYNAMIC:VERY_FAST | 256 | 64 | -90% | $0.001
 LAPIS_ORE | $19.2 | STATIC | - | - | - | -
 LARGE_AMETHYST_BUD | $10.8 | STATIC | - | - | - | -
@@ -539,7 +539,7 @@ MANGROVE_SLAB | $0.88 | DYNAMIC:MEDIUM | 1629 | 407 | -65% | $0.017
 MANGROVE_TRAPDOOR | $4 | DYNAMIC:MEDIUM | 464 | 116 | -65% | $0.017
 MANGROVE_WOOD | $10.5 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 MEDIUM_AMETHYST_BUD | $10.8 | STATIC | - | - | - | -
-MELON | $4 | DYNAMIC:VERY_FAST* | 2458 | 614 | -90% | $0.001
+MELON | $4.5 | DYNAMIC:VERY_FAST* | 2458 | 614 | -90% | $0.001
 MELON_SLICE | $0.5 | DYNAMIC:VERY_FAST | 2458 | 614 | -90% | $0.001
 MILK_BUCKET | $45 | STATIC | - | - | - | -
 MINECART | $16 | STATIC | - | - | - | -
@@ -560,7 +560,7 @@ MUTTON | $9 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 MYCELIUM | $2 | STATIC | - | - | - | -
 NAME_TAG | $135 | STATIC | - | - | - | -
 NAUTILUS_SHELL | $14.4 | DYNAMIC:SLOW | 256 | 64 | -50% | $0.017
-NETHERITE_BLOCK | $85000 | STATIC | - | - | - | -
+NETHERITE_BLOCK | $90000 | STATIC | - | - | - | -
 NETHERITE_INGOT | $10000 | STATIC | - | - | - | -
 NETHERITE_SCRAP | $2800 | STATIC | - | - | - | -
 NETHERITE_UPGRADE_SMITHING_TEMPLATE | $6900 | STATIC | - | - | - | -
@@ -718,13 +718,13 @@ RABBIT | $10 | DYNAMIC:FAST | 256 | 64 | -80% | $0.017
 RABBIT_FOOT | $6 | DYNAMIC:SLOW | 400 | 100 | -50% | $0.017
 RABBIT_STEW | $12.6 | STATIC | - | - | - | -
 RAW_COPPER | $4 | STATIC | - | - | - | -
-RAW_COPPER_BLOCK | $28.8 | STATIC | - | - | - | -
+RAW_COPPER_BLOCK | $36 | STATIC | - | - | - | -
 RAW_GOLD | $16.2 | STATIC | - | - | - | -
-RAW_GOLD_BLOCK | $121.5 | STATIC | - | - | - | -
+RAW_GOLD_BLOCK | $145.8 | STATIC | - | - | - | -
 RAW_IRON | $4 | STATIC | - | - | - | -
 RAW_IRON_BLOCK | $36 | STATIC | - | - | - | -
 REDSTONE | $9 | DYNAMIC:VERY_FAST | 256 | 64 | -90% | $0.001
-REDSTONE_BLOCK | $54 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
+REDSTONE_BLOCK | $81 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 REDSTONE_LAMP | $2 | STATIC | - | - | - | -
 REDSTONE_ORE | $19.2 | STATIC | - | - | - | -
 REDSTONE_TORCH | $6 | STATIC | - | - | - | -
@@ -777,7 +777,7 @@ SHULKER_BOX | $283.5 | STATIC | - | - | - | -
 SHULKER_SHELL | $375 | DYNAMIC:RARE | 16 | 8 | -40% | $0.05
 SKELETON_SKULL | $135 | STATIC | - | - | - | -
 SLIME_BALL | $1.25 | DYNAMIC:FAST | 960 | 240 | -80% | $0.017
-SLIME_BLOCK | $10.5 | DYNAMIC:FAST* | 960 | 240 | -80% | $0.017
+SLIME_BLOCK | $11.25 | DYNAMIC:FAST* | 960 | 240 | -80% | $0.017
 SMALL_AMETHYST_BUD | $10.8 | STATIC | - | - | - | -
 SMALL_DRIPLEAF | $0.3 | DYNAMIC:VERY_FAST | 1365 | 341 | -90% | $0.001
 SMITHING_TABLE | $16 | STATIC | - | - | - | -
@@ -825,7 +825,7 @@ STONE_SLAB | $2 | STATIC | - | - | - | -
 STRING | $0.5 | DYNAMIC:FAST | 1638 | 410 | -80% | $0.017
 STRIPPED_ACACIA_LOG | $8 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 STRIPPED_ACACIA_WOOD | $10.5 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
-STRIPPED_BAMBOO_BLOCK | $2.25 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
+STRIPPED_BAMBOO_BLOCK | $6 | DYNAMIC:VERY_FAST* | 1333 | 333 | -90% | $0.001
 STRIPPED_BIRCH_LOG | $8 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 STRIPPED_BIRCH_WOOD | $10.5 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
 STRIPPED_CHERRY_LOG | $8 | DYNAMIC:VERY_FAST* | 256 | 64 | -90% | $0.001
