@@ -681,6 +681,27 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     // Craftable output forms share their ingredient's daily market counter.
     // Accounting units are expressed in ingredient equivalents. One gold block consumes
     // nine ingot units; 2 moss blocks and 3 moss carpets consume the same six subunits.
+    private Material woodAccountingMaterial(Material material) {
+        if (material == null) return null;
+        String name = material.name();
+        if (name.startsWith("STRIPPED_")) name = name.substring("STRIPPED_".length());
+
+        for (String prefix : List.of("OAK", "SPRUCE", "BIRCH", "JUNGLE", "ACACIA",
+                "DARK_OAK", "MANGROVE", "CHERRY", "PALE_OAK")) {
+            if (name.equals(prefix + "_LOG") || name.equals(prefix + "_WOOD")
+                    || name.equals(prefix + "_PLANKS")) {
+                return Material.matchMaterial(prefix + "_LOG");
+            }
+        }
+        for (String prefix : List.of("CRIMSON", "WARPED")) {
+            if (name.equals(prefix + "_STEM") || name.equals(prefix + "_HYPHAE")
+                    || name.equals(prefix + "_PLANKS")) {
+                return Material.matchMaterial(prefix + "_STEM");
+            }
+        }
+        return null;
+    }
+
     private Material marketAccountingMaterial(Material material) {
         if (material == null) return null;
         return switch (material) {
@@ -695,25 +716,52 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             case BONE_BLOCK -> Material.BONE;
             case SLIME_BLOCK -> Material.SLIME_BALL;
             case HAY_BLOCK -> Material.WHEAT;
-            case BAMBOO_BLOCK -> Material.BAMBOO;
+            case BAMBOO_BLOCK, STRIPPED_BAMBOO_BLOCK -> Material.BAMBOO;
             case HONEY_BLOCK -> Material.HONEY_BOTTLE;
             case HONEYCOMB_BLOCK -> Material.HONEYCOMB;
             case MELON -> Material.MELON_SLICE;
             case MOSS_CARPET -> Material.MOSS_BLOCK;
-            default -> material;
+            default -> {
+                Material wood = woodAccountingMaterial(material);
+                yield wood == null ? material : wood;
+            }
         };
+    }
+
+    private long woodAccountingUnitsPerItem(Material material) {
+        String name = material.name();
+        if (name.startsWith("STRIPPED_")) name = name.substring("STRIPPED_".length());
+        if (name.startsWith("BAMBOO_")) {
+            if (name.equals("BAMBOO_BLOCK")) return 36L; // 9 bamboo, with 4 subunits per bamboo
+            if (name.equals("BAMBOO_PLANKS")) return 18L; // 2 planks per bamboo block
+        }
+        if (name.equals("BAMBOO")) return 4L;
+
+        for (String prefix : List.of("OAK", "SPRUCE", "BIRCH", "JUNGLE", "ACACIA",
+                "DARK_OAK", "MANGROVE", "CHERRY", "PALE_OAK")) {
+            if (name.equals(prefix + "_LOG")) return 12L;
+            if (name.equals(prefix + "_WOOD")) return 16L;
+            if (name.equals(prefix + "_PLANKS")) return 3L;
+        }
+        for (String prefix : List.of("CRIMSON", "WARPED")) {
+            if (name.equals(prefix + "_STEM")) return 12L;
+            if (name.equals(prefix + "_HYPHAE")) return 16L;
+            if (name.equals(prefix + "_PLANKS")) return 3L;
+        }
+        return 1L;
     }
 
     private long marketAccountingUnitsPerItem(Material material) {
         if (material == null) return 1L;
         return switch (material) {
             case GOLD_BLOCK, IRON_BLOCK, COPPER_BLOCK, REDSTONE_BLOCK, LAPIS_BLOCK, EMERALD_BLOCK,
-                 DRIED_KELP_BLOCK, NETHER_WART_BLOCK, SLIME_BLOCK, HAY_BLOCK, BAMBOO_BLOCK, MELON -> 9L;
+                 DRIED_KELP_BLOCK, NETHER_WART_BLOCK, SLIME_BLOCK, HAY_BLOCK, MELON -> 9L;
+            case BAMBOO_BLOCK, STRIPPED_BAMBOO_BLOCK -> 36L;
             case BONE_BLOCK -> 3L;
             case HONEY_BLOCK, HONEYCOMB_BLOCK -> 4L;
             case MOSS_BLOCK -> 3L;
             case MOSS_CARPET -> 2L;
-            default -> 1L;
+            default -> woodAccountingUnitsPerItem(material);
         };
     }
 
@@ -723,7 +771,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     // Moss uses thirds of a moss block so 2 blocks and 3 carpets account for equal volume.
     private long marketAccountingScale(Material accountingMaterial) {
-        return accountingMaterial == Material.MOSS_BLOCK ? 3L : 1L;
+        if (accountingMaterial == Material.MOSS_BLOCK) return 3L;
+        if (accountingMaterial == Material.BAMBOO) return 4L;
+        String name = accountingMaterial == null ? "" : accountingMaterial.name();
+        if (name.endsWith("_LOG") || name.endsWith("_STEM")) return 12L;
+        return 1L;
     }
 
     private BigDecimal marketAccountingUnitPrice(UUID owner, Material accountingMaterial, long soldUnits) {
