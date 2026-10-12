@@ -158,7 +158,8 @@ GHAST_TEAR=213,53,0.50,0.017
 GLOW_BERRIES=800,200,0.90,0.001
 GLOW_INK_SAC=1638,410,0.50,0.017
 GLOW_LICHEN=1365,341,0.90,0.001
-GOLD_INGOT=16,8,0.90,0.001
+# Gold blocks share this market counter using 9 gold-equivalent units per block; do not give GOLD_BLOCK its own independent allowance.
+GOLD_INGOT=24,12,0.50,0.017
 GRAY_BED=70,18,0.80,0.017
 GRAY_CARPET=200,50,0.80,0.017
 GRAY_WOOL=133,33,0.80,0.017
