@@ -2,6 +2,11 @@ name: Build CoolWips Economy
 # Build/publish current plugin version
 
 on:
+  pull_request:
+    paths:
+      - 'CoolWipsEconomy/**'
+      - '!CoolWipsEconomy/*.jar'
+      - '.github/workflows/build.yml'
   push:
     paths:
       - 'CoolWipsEconomy/**'
@@ -13,7 +18,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: coolwips-economy-build
+  group: coolwips-economy-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -34,16 +39,6 @@ jobs:
           java-version: '25'
           cache: maven
           cache-dependency-path: CoolWipsEconomy/pom.xml
-
-      - name: Sync to latest main
-        working-directory: .
-        shell: bash
-        run: |
-          # A build can start while newer version commits are being pushed.
-          # Always build the current main branch, not the older event commit.
-          git fetch origin main
-          git reset --hard origin/main
-          git clean -fd
 
       - name: Build
         run: mvn -U --batch-mode clean package
@@ -68,6 +63,7 @@ jobs:
           if-no-files-found: error
 
       - name: Put plugin JAR in repository
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         working-directory: .
         shell: bash
         run: |
@@ -77,15 +73,14 @@ jobs:
             exit 1
           fi
 
-          # Save the verified build outside the git working tree before syncing.
-          cp "$JAR" "$RUNNER_TEMP/CoolWipsEconomy-built.jar"
-
-          # Rebase the publishing workspace to the latest main before creating
-          # the JAR commit. This avoids stale-branch and old-JAR modify/delete conflicts.
+          # Never publish an older build over newer source changes.
           git fetch origin main
-          git reset --hard origin/main
-          git clean -fd
-          cp "$RUNNER_TEMP/CoolWipsEconomy-built.jar" "CoolWipsEconomy/$(basename "$JAR")"
+          if [ "$(git rev-parse HEAD:CoolWipsEconomy)" != "$(git rev-parse origin/main:CoolWipsEconomy)" ]; then
+            echo "Main changed during the build; the newer run will publish its JAR."
+            exit 0
+          fi
+          git merge --ff-only origin/main
+          cp "$JAR" "CoolWipsEconomy/$(basename "$JAR")"
 
           # Ensure only the current versioned JAR is present.
           find CoolWipsEconomy -maxdepth 1 -type f -name 'CoolWipsEconomy-*.jar' ! -name "$(basename "$JAR")" -delete

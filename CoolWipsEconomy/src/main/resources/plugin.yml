@@ -1,5 +1,5 @@
 name: CoolWipsEconomy
-version: '1.4.17'
+version: '1.5.0'
 main: io.github.coollikecoolwip.economy.CoolWipsEconomy
 description: Sell and buy Minecraft items for UnbelievaBoat cash using DiscordSRV.
 author: coollikecoolwip
@@ -8,8 +8,8 @@ depend:
   - DiscordSRV
 commands:
   sell:
-    description: Sell an item for UnbelievaBoat cash.
-    usage: /sell <item> [amount]
+    description: Open the automatic sell menu, or sell an item for UnbelievaBoat cash.
+    usage: /sell [item] [amount]
     permission: coolwipseconomy.sell
   sellall:
     description: Sell all of one item.
@@ -54,8 +54,8 @@ commands:
     aliases: [bounties]
     permission: coolwipseconomy.use
   sellchest:
-    description: Automatically sell priced items placed in a sell chest when it is closed.
-    usage: /sellchest <create|remove|status>
+    description: Open the automatic sell menu, or manage a physical sell chest.
+    usage: /sellchest [create|remove|status]
     permission: coolwipseconomy.use
   prices:
     description: View item sell prices.

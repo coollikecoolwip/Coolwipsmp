@@ -64,6 +64,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     private final Map<Material, Long> shopPrices = new ConcurrentHashMap<>();
     private final Map<EntityType, Long> mobShopPrices = new ConcurrentHashMap<>();
     private final Map<UUID, ReentrantLock> locks = new ConcurrentHashMap<>();
+    private SellMenu sellMenu;
     private HttpClient http;
     private String token, guildId, baseUrl, reason, buyReason, pricesUrl, shopUrl, mobShopUrl, marketRulesUrl;
     private static final String DEFAULT_PRICES_URL = "https://raw.githubusercontent.com/coollikecoolwip/Coolwipsmp/main/CoolWipsEconomy/prices.txt";
@@ -214,6 +215,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         loadEconomyStats();
         loadEconomyLedger();
         Bukkit.getPluginManager().registerEvents(this, this);
+        sellMenu = new SellMenu(this, this::processSellMenu);
+        Bukkit.getPluginManager().registerEvents(sellMenu, this);
+        for (String directory : List.of("pending-menu-sales", "pending-trades")) {
+            File recoveryDirectory = new File(getDataFolder(), directory);
+            File[] pendingRecoveries = recoveryDirectory.listFiles((dir, name) -> name.endsWith(".yml"));
+            if (pendingRecoveries != null && pendingRecoveries.length > 0) {
+                getLogger().warning("Found " + pendingRecoveries.length + " unresolved transaction(s) in "
+                        + recoveryDirectory + ". Staff must check bank payments before restoring their items.");
+            }
+        }
 
         for (String name : List.of("sell","sellall","prices","balance","cweconomy","buy","buymob","rename","repair","shop","pay","sellto","buyfrom","sellchest","history","bounty")) {
             PluginCommand c = getCommand(name);
@@ -236,6 +247,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     @Override public void onDisable() {
+        if (sellMenu != null) sellMenu.shutdown();
         flushEconomyLedgerQueue();
         saveMarketLedger();
         saveEconomyStats();
@@ -2282,12 +2294,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     sender.sendMessage("Only players can use /sell.");
                     return true;
                 }
+                if (args.length == 0) {
+                    openSellMenu(p);
+                    return true;
+                }
                 if (args.length == 1 && args[0].equalsIgnoreCase("confirm")) {
                     sell(p, "", -2);
                     return true;
                 }
                 if (args.length < 1 || args.length > 2) {
-                    p.sendMessage("§cUsage: /sell <item> [amount]");
+                    p.sendMessage("§cUsage: /sell or /sell <item> [amount]");
                     return true;
                 }
                 int amount = parseAmount(p, args.length == 2 ? args[1] : "1");
@@ -2465,6 +2481,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     sender.sendMessage("Only players can use /sellchest.");
                     return true;
                 }
+                if (args.length == 0) {
+                    if (p.hasPermission("coolwipseconomy.sell")) openSellMenu(p);
+                    else p.sendMessage("§cYou do not have permission to sell items.");
+                    return true;
+                }
                 if (args.length != 1 || (!args[0].equalsIgnoreCase("create")
                         && !args[0].equalsIgnoreCase("remove")
                         && !args[0].equalsIgnoreCase("status"))) {
@@ -2512,6 +2533,10 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 if (!owner.equals(p.getUniqueId()) && !p.isOp()) {
                     p.sendMessage("§cOnly the owner can remove this sell chest.");
+                    return true;
+                }
+                if (isSellChestProcessing(((Chest) target.getState()).getInventory())) {
+                    p.sendMessage("§eThat sell chest is processing a sale. Please wait.");
                     return true;
                 }
                 unmarkSellChest(target);
@@ -2659,7 +2684,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         ReentrantLock killerLock = locks.computeIfAbsent(killer.getUniqueId(), k -> new ReentrantLock());
-        if (!killerLock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(killerLock)) {
             bountyStateLock.lock();
             try {
                 bounties.merge(target.getUniqueId(), bounty,
@@ -2728,39 +2753,55 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         Block block = event.getClickedBlock();
         if (block == null || !isChestBlock(block)) return;
 
-        UUID owner = sellChestOwner(block);
-        if (owner == null) return;
+        SellChestInfo info = getSellChestInfo(((Chest) block.getState()).getInventory());
+        if (info == null) return;
 
         Player player = event.getPlayer();
-        if (!owner.equals(player.getUniqueId()) && !player.isOp()) {
+        if (!info.owner().equals(player.getUniqueId()) && !player.isOp()) {
             event.setCancelled(true);
             player.sendMessage("§cThat is not your sell chest.");
             return;
         }
 
-        ReentrantLock lock = sellChestLocks.get(chestKey(block));
-        if (lock != null && lock.isLocked()) {
+        if (isSellChestProcessing(((Chest) block.getState()).getInventory())) {
             event.setCancelled(true);
             player.sendMessage("§eThat sell chest is processing a sale. Please wait.");
         }
     }
 
-    @EventHandler
+    @EventHandler(priority = org.bukkit.event.EventPriority.HIGHEST, ignoreCancelled = true)
     public void onSellChestBreak(BlockBreakEvent event) {
         Block block = event.getBlock();
         if (!isChestBlock(block)) return;
 
-        UUID owner = sellChestOwner(block);
-        if (owner == null) return;
+        SellChestInfo info = getSellChestInfo(((Chest) block.getState()).getInventory());
+        if (info == null) return;
 
         Player player = event.getPlayer();
-        if (!owner.equals(player.getUniqueId()) && !player.isOp()) {
+        if (!info.owner().equals(player.getUniqueId()) && !player.isOp()) {
             event.setCancelled(true);
             player.sendMessage("§cOnly the owner can break this sell chest.");
             return;
         }
 
+        if (isSellChestProcessing(((Chest) block.getState()).getInventory())) {
+            event.setCancelled(true);
+            player.sendMessage("§eThat sell chest is processing a sale. Please wait.");
+        }
+    }
+
+    @EventHandler(priority = org.bukkit.event.EventPriority.MONITOR, ignoreCancelled = true)
+    public void onSellChestBroken(BlockBreakEvent event) {
+        Block block = event.getBlock();
+        if (!isChestBlock(block) || getSellChestInfo(((Chest) block.getState()).getInventory()) == null) return;
         unmarkSellChest(block);
+    }
+
+    private boolean isSellChestProcessing(Inventory inventory) {
+        SellChestInfo info = getSellChestInfo(inventory);
+        if (info == null) return false;
+        ReentrantLock lock = sellChestLocks.get(info.key());
+        return lock != null && lock.isLocked();
     }
 
     @EventHandler
@@ -2848,7 +2889,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (info == null || sellsDisabled) return;
 
         ReentrantLock lock = sellChestLocks.computeIfAbsent(info.key(), k -> new ReentrantLock());
-        if (!lock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(lock)) {
             String key = info.key();
             if (scheduledAutomaticSellChestRetries.add(key)) {
                 Bukkit.getScheduler().runTaskLater(this, () -> {
@@ -2860,7 +2901,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         ReentrantLock playerLock = locks.computeIfAbsent(info.owner(), k -> new ReentrantLock());
-        if (!playerLock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(playerLock)) {
             lock.unlock();
             String key = info.key();
             if (scheduledAutomaticSellChestRetries.add(key)) {
@@ -3125,10 +3166,12 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
     }
 
     private Block adjacentChest(Block block) {
-        for (var face : List.of(org.bukkit.block.BlockFace.NORTH, org.bukkit.block.BlockFace.SOUTH,
-                org.bukkit.block.BlockFace.EAST, org.bukkit.block.BlockFace.WEST)) {
-            Block other = block.getRelative(face);
-            if (isChestBlock(other)) return other;
+        if (!(block.getState() instanceof Chest chest)) return null;
+        // A nearby single chest, trapped chest, or chest facing a different direction
+        // is a separate container. Only mark/unmark the real connected double-chest half.
+        if (!(chest.getInventory().getHolder() instanceof DoubleChest doubleChest)) return null;
+        for (InventoryHolder side : new InventoryHolder[]{doubleChest.getLeftSide(), doubleChest.getRightSide()}) {
+            if (side instanceof Chest other && !other.getBlock().equals(block)) return other.getBlock();
         }
         return null;
     }
@@ -3342,6 +3385,181 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         sender.sendMessage("§e/cweconomy maintenance §7- manage sale maintenance");
     }
 
+    private void openSellMenu(Player player) {
+        if (!sellPricesReady(player)) return;
+        if (sellsDisabled) {
+            player.sendMessage("§cSelling is currently disabled for maintenance.");
+            return;
+        }
+        ReentrantLock lock = locks.get(player.getUniqueId());
+        if (lock != null && lock.isLocked()) {
+            player.sendMessage("§eYou already have a transaction processing. Please wait.");
+            return;
+        }
+        if (linkedId(player) != null) sellMenu.open(player);
+    }
+
+    private void processSellMenu(SellMenu.Session session) {
+        Player player = session.owner;
+        if (session.processing || !player.isOnline()) return;
+        if (!player.hasPermission("coolwipseconomy.sell") || sellsDisabled || !pricesReady.get()) return;
+
+        Map<Material, Integer> amounts = new LinkedHashMap<>();
+        int total = 0;
+        for (ItemStack item : session.inventory.getContents()) {
+            if (item == null || !prices.containsKey(item.getType()) || maintenanceBlocks.contains(item.getType())) continue;
+            int amount = Math.min(item.getAmount(), maxItems - total);
+            if (amount <= 0) break;
+            amounts.merge(item.getType(), amount, Integer::sum);
+            total += amount;
+        }
+        if (amounts.isEmpty()) return;
+        ReentrantLock lock = locks.computeIfAbsent(player.getUniqueId(), key -> new ReentrantLock());
+        if (!TransactionLocks.tryAcquire(lock)) {
+            player.sendMessage("§eAnother transaction is processing. Move an item in the menu to try again.");
+            return;
+        }
+        String discordId = linkedId(player);
+        if (discordId == null) {
+            lock.unlock();
+            return;
+        }
+        Map<Material, MarketSale> sales = reserveMarketBatch(player.getUniqueId(), amounts);
+        if (sales.size() != amounts.size()) {
+            lock.unlock();
+            return;
+        }
+        BigDecimal gross = sales.values().stream().map(MarketSale::gross).reduce(BigDecimal.ZERO, BigDecimal::add);
+        long payout = afterTax(gross, sellTax);
+        if (gross.compareTo(BigDecimal.valueOf(maxMoney)) > 0 || payout < 1) {
+            releaseMarketBatch(sales);
+            lock.unlock();
+            player.sendMessage(payout < 1 ? "§eAdd more items: this sale is worth less than $1 after tax."
+                    : "§cThis batch exceeds the sale limit. Take some items out and try again.");
+            return;
+        }
+
+        ItemStack[] contents = cloneContents(session.inventory.getContents());
+        Map<Material, Integer> remaining = new HashMap<>(amounts);
+        List<ItemStack> removed = new ArrayList<>();
+        for (int slot = 0; slot < contents.length; slot++) {
+            ItemStack item = contents[slot];
+            if (item == null) continue;
+            int take = Math.min(item.getAmount(), remaining.getOrDefault(item.getType(), 0));
+            if (take <= 0) continue;
+            ItemStack part = item.clone();
+            part.setAmount(take);
+            removed.add(part);
+            remaining.merge(item.getType(), -take, Integer::sum);
+            if (take == item.getAmount()) contents[slot] = null;
+            else item.setAmount(item.getAmount() - take);
+        }
+
+        // Serialize the exact item metadata before removing anything. The journal
+        // is written before any bank mutation, so a shutdown/ambiguous API response
+        // leaves staff a recoverable record instead of silently destroying items.
+        UUID saleId = UUID.randomUUID();
+        File recovery = new File(getDataFolder(), "pending-menu-sales/" + saleId + ".yml");
+        String recoveryText;
+        try {
+            YamlConfiguration data = new YamlConfiguration();
+            data.set("sale-id", saleId.toString());
+            data.set("player", player.getUniqueId().toString());
+            data.set("discord-id", discordId);
+            data.set("payout", payout);
+            data.set("created", java.time.Instant.now().toString());
+            data.set("items", removed);
+            recoveryText = data.saveToString();
+            java.nio.file.Files.createDirectories(recovery.toPath().getParent());
+            java.nio.file.Files.writeString(recovery.toPath(), recoveryText, StandardCharsets.UTF_8,
+                    java.nio.file.StandardOpenOption.CREATE_NEW);
+            session.inventory.setContents(contents);
+        } catch (Exception e) {
+            releaseMarketBatch(sales);
+            lock.unlock();
+            deleteMenuRecovery(recovery);
+            getLogger().log(java.util.logging.Level.SEVERE, "Could not prepare menu sale " + saleId, e);
+            return;
+        }
+        session.processing = true;
+        final int itemCount = total;
+        final double quotedTax = sellTax;
+        player.sendMessage("§7Selling " + itemCount + " items for §a$" + money(payout) + " §7after tax...");
+        try {
+            Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
+                BankMutationResult result;
+                try {
+                    result = changeBank(discordId, payout, "CoolWips SMP sell menu " + saleId, null);
+                } catch (Exception e) {
+                    getLogger().log(java.util.logging.Level.SEVERE, "Menu sale " + saleId + " failed", e);
+                    result = new BankMutationResult(BankMutationState.UNKNOWN, null);
+                }
+                try {
+                    java.nio.file.Files.writeString(recovery.toPath(),
+                            "bank-result: " + result.state().name() + "\n", StandardCharsets.UTF_8,
+                            java.nio.file.StandardOpenOption.APPEND);
+                } catch (IOException e) {
+                    getLogger().warning("Could not update recovery record " + saleId + ": " + e.getMessage());
+                }
+                BankMutationResult outcome = result;
+                // If disable has cancelled callbacks, leave the recovery record for
+                // staff. Never restore items while the payment could have applied.
+                if (!isEnabled()) return;
+                Bukkit.getScheduler().runTask(this, () -> {
+                    try {
+                        if (outcome.state() == BankMutationState.NOT_APPLIED) {
+                            releaseMarketBatch(sales);
+                            sellMenu.restore(session, removed);
+                            deleteMenuRecovery(recovery);
+                            if (player.isOnline()) player.sendMessage("§cSale failed. Your items were returned; no money was added.");
+                        } else if (outcome.state() == BankMutationState.UNKNOWN) {
+                            getLogger().severe("Unverified menu sale " + saleId + " for " + player.getUniqueId()
+                                    + ". Check the bank before restoring items from " + recovery);
+                            if (player.isOnline()) player.sendMessage("§cPayment could not be verified. Contact staff with sale ID " + saleId + ".");
+                        } else {
+                            recordMenuSale(player, amounts, sales, payout, quotedTax);
+                            deleteMenuRecovery(recovery);
+                            if (player.isOnline()) player.sendMessage("§aSold " + itemCount + " items for §a$" + money(payout) + "§a.");
+                        }
+                    } finally {
+                        lock.unlock();
+                        sellMenu.finished(session, outcome.state() == BankMutationState.APPLIED);
+                    }
+                });
+            });
+        } catch (RuntimeException e) {
+            releaseMarketBatch(sales);
+            sellMenu.restore(session, removed);
+            deleteMenuRecovery(recovery);
+            lock.unlock();
+            sellMenu.finished(session, false);
+            getLogger().log(java.util.logging.Level.SEVERE, "Could not schedule menu sale " + saleId, e);
+        }
+    }
+
+    private void deleteMenuRecovery(File recovery) {
+        try {
+            java.nio.file.Files.deleteIfExists(recovery.toPath());
+        } catch (IOException e) {
+            getLogger().warning("Completed menu sale recovery could not be removed: " + recovery);
+        }
+    }
+
+    private void recordMenuSale(Player player, Map<Material, Integer> amounts, Map<Material, MarketSale> sales,
+                                long payout, double quotedTax) {
+        long remaining = payout;
+        int index = 0;
+        for (Map.Entry<Material, Integer> entry : amounts.entrySet()) {
+            // Allocate the final rounding remainder so the ledger equals the bank
+            // credit even for a basket containing several fractional item values.
+            long part = ++index == amounts.size() ? remaining : afterTax(sales.get(entry.getKey()).gross(), quotedTax);
+            remaining -= part;
+            record(new Transaction(player.getUniqueId(), player.getName(), entry.getKey().name(),
+                    entry.getValue(), part, false, new java.util.Date().toString()));
+            recordEconomyCreated(player.getUniqueId(), player.getName(), entry.getKey(), entry.getValue(), part, "SELL_MENU");
+        }
+    }
+
     private void sell(Player p, String raw, int requested) {
         Material material;
         int amount;
@@ -3428,7 +3646,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (!cooldownReady(p)) return;
 
         ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
-        if (!lock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(lock)) {
             p.sendMessage("§eYou already have a transaction processing. Please wait.");
             return;
         }
@@ -3703,11 +3921,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 ? senderLock : recipientLock;
         ReentrantLock second = first == senderLock ? recipientLock : senderLock;
 
-        if (!first.tryLock()) {
+        if (!TransactionLocks.tryAcquire(first)) {
             sender.sendMessage("§eYou or the other player currently has another transaction processing.");
             return;
         }
-        if (!second.tryLock()) {
+        if (!TransactionLocks.tryAcquire(second)) {
             first.unlock();
             sender.sendMessage("§eYou or the other player currently has another transaction processing.");
             return;
@@ -3819,7 +4037,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         if (posterDiscord == null) return;
 
         ReentrantLock lock = locks.computeIfAbsent(poster.getUniqueId(), k -> new ReentrantLock());
-        if (!lock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(lock)) {
             poster.sendMessage("§eYou already have a transaction processing. Please wait.");
             return;
         }
@@ -4025,11 +4243,11 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                 ? buyerLock : sellerLock;
         ReentrantLock second = first == buyerLock ? sellerLock : buyerLock;
 
-        if (!first.tryLock()) {
+        if (!TransactionLocks.tryAcquire(first)) {
             seller.sendMessage("§eThe buyer currently has another transaction processing.");
             return;
         }
-        if (!second.tryLock()) {
+        if (!TransactionLocks.tryAcquire(second)) {
             first.unlock();
             seller.sendMessage("§eThe other player currently has another transaction processing.");
             return;
@@ -4048,6 +4266,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         buyer.sendMessage("§7Processing your trade with §f" + seller.getName() + "§7...");
 
         final long total = trade.total();
+        final Location buyerReturnLocation = buyer.getLocation().clone();
+        final Location sellerReturnLocation = seller.getLocation().clone();
         Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
             Long balance = bankBalance(buyerDiscord);
             if (balance == null) {
@@ -4111,28 +4331,66 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
                 final List<ItemStack> tradedItems = takeItems(seller, material, trade.amount());
                 if (tradedItems.stream().mapToInt(ItemStack::getAmount).sum() != trade.amount()) {
-                    restoreItems(seller, tradedItems);
+                    returnTradeItems(seller, sellerReturnLocation, tradedItems);
                     reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
                     buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
                     seller.sendMessage("§cTrade cancelled because the item transfer could not be completed.");
                     return;
                 }
 
-                if (!addItemsAtomically(buyer, tradedItems)) {
-                    restoreItems(seller, tradedItems);
-                    reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
-                    buyer.sendMessage("§cTrade cancelled. Your payment is being reversed.");
-                    seller.sendMessage("§cTrade cancelled because the item could not be delivered.");
+                // Hold the removed items in escrow until the seller payout is checked.
+                // Delivering first would duplicate them when a rejected credit restores
+                // the seller's inventory and refunds the buyer.
+                final File tradeRecovery = new File(getDataFolder(), "pending-trades/" + UUID.randomUUID() + ".yml");
+                try {
+                    YamlConfiguration data = new YamlConfiguration();
+                    data.set("buyer-uuid", buyer.getUniqueId().toString());
+                    data.set("seller-uuid", seller.getUniqueId().toString());
+                    data.set("buyer-discord", buyerDiscord);
+                    data.set("seller-discord", sellerDiscord);
+                    data.set("money", total);
+                    data.set("buyer-debit-verified", true);
+                    data.set("created", java.time.Instant.now().toString());
+                    data.set("items", tradedItems);
+                    data.set("staff-note", "Check both bank payments and inventories before restoring or refunding this trade.");
+                    java.nio.file.Files.createDirectories(tradeRecovery.toPath().getParent());
+                    java.nio.file.Files.writeString(tradeRecovery.toPath(), data.saveToString(), StandardCharsets.UTF_8,
+                            java.nio.file.StandardOpenOption.CREATE_NEW);
+                } catch (IOException | RuntimeException e) {
+                    getLogger().log(java.util.logging.Level.SEVERE,
+                            "Could not preserve pending trade items; seller credit was not attempted.", e);
+                    returnTradeItems(seller, sellerReturnLocation, tradedItems);
+                    deleteMenuRecovery(tradeRecovery);
+                    reverseMoney(buyerDiscord, total, "Player item trade recovery save failure", null, first, second);
+                    buyer.sendMessage("§cTrade cancelled safely. Your payment is being reversed.");
+                    seller.sendMessage("§cTrade cancelled safely. Your items were returned.");
                     return;
                 }
-
                 Bukkit.getScheduler().runTaskAsynchronously(this, () -> {
-                    BankMutationResult credit = changeBank(sellerDiscord, total,
-                            "Player item trade sale", null);
+                    BankMutationResult credit;
+                    try {
+                        credit = changeBank(sellerDiscord, total, "Player item trade sale", null);
+                    } catch (RuntimeException e) {
+                        getLogger().log(java.util.logging.Level.SEVERE,
+                                "Seller payment could not be verified for trade with " + seller.getName() + ".", e);
+                        credit = new BankMutationResult(BankMutationState.UNKNOWN, null);
+                    }
+
+                    try {
+                        java.nio.file.Files.writeString(tradeRecovery.toPath(),
+                                "seller-credit-result: " + credit.state().name() + "\n", StandardCharsets.UTF_8,
+                                java.nio.file.StandardOpenOption.APPEND);
+                    } catch (IOException e) {
+                        getLogger().warning("Could not update pending trade record " + tradeRecovery + ": " + e.getMessage());
+                    }
+                    // A disabled plugin cannot receive the delivery callback. Preserve
+                    // its exact escrow and payment result for staff instead.
+                    if (!isEnabled()) return;
 
                     if (credit.state() == BankMutationState.NOT_APPLIED) {
                         Bukkit.getScheduler().runTask(this, () -> {
-                            restoreItems(seller, tradedItems);
+                            returnTradeItems(seller, sellerReturnLocation, tradedItems);
+                            deleteMenuRecovery(tradeRecovery);
                             buyer.sendMessage("§cSeller payment failed. Your payment is being reversed.");
                             seller.sendMessage("§cTrade payment failed. The items were returned.");
                             reverseMoney(buyerDiscord, total, "Player item trade reversal", null, first, second);
@@ -4141,8 +4399,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     }
 
                     if (credit.state() == BankMutationState.UNKNOWN) {
-                        unlockOnMainThread(first, second);
                         Bukkit.getScheduler().runTask(this, () -> {
+                            // The buyer debit is verified. Deliver the single escrowed
+                            // copy, and leave ambiguous seller payments for staff review.
+                            returnTradeItems(buyer, buyerReturnLocation, tradedItems);
+                            deleteMenuRecovery(tradeRecovery);
+                            first.unlock();
+                            second.unlock();
+                            getLogger().severe("Unverified seller credit for trade: seller=" + seller.getUniqueId()
+                                    + ", buyer=" + buyer.getUniqueId() + ", amount=" + total
+                                    + ". Items delivered once to the paid buyer; no refund or seller item restoration.");
                             buyer.sendMessage("§cSeller payment status could not be verified. Do not retry; contact staff.");
                             seller.sendMessage("§cTrade payment status could not be verified. Contact staff.");
                         });
@@ -4150,6 +4416,8 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     }
 
                     Bukkit.getScheduler().runTask(this, () -> {
+                        returnTradeItems(buyer, buyerReturnLocation, tradedItems);
+                        deleteMenuRecovery(tradeRecovery);
                         Bukkit.getScheduler().runTaskAsynchronously(this, () ->
                                 recordEconomyTransfer(buyer.getUniqueId(), buyer.getName(),
                                         seller.getUniqueId(), seller.getName(),
@@ -4177,6 +4445,16 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
 
     private void removeTrade(PendingTrade trade) {
         pendingTrades.remove(trade.buyerUuid());
+    }
+
+    private void returnTradeItems(Player recipient, Location fallback, List<ItemStack> items) {
+        if (recipient.isOnline()) {
+            restoreItems(recipient, items);
+            return;
+        }
+        if (fallback != null && fallback.getWorld() != null) {
+            for (ItemStack item : items) fallback.getWorld().dropItemNaturally(fallback, item.clone());
+        }
     }
 
     private void listMobShop(Player p) {
@@ -4370,7 +4648,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
             if (original.equals(updated)) { p.sendMessage("§eThat item already has this name."); return; }
         }
         ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
-        if (!lock.tryLock()) { p.sendMessage("§eYou already have an economy transaction processing. Please wait."); return; }
+        if (!TransactionLocks.tryAcquire(lock)) { p.sendMessage("§eYou already have an economy transaction processing. Please wait."); return; }
         String discordId = linkedId(p); if (discordId == null) { lock.unlock(); return; }
         String category = repair ? "ITEM_REPAIR" : "ITEM_RENAME";
         String reason = repair ? "CoolWips SMP paid item repair" : "CoolWips SMP paid item rename";
@@ -4549,7 +4827,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), key -> new ReentrantLock());
-        if (!lock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(lock)) {
             p.sendMessage("§eYou already have a transaction processing. Please wait.");
             return;
         }
@@ -4664,7 +4942,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
 
         ReentrantLock lock = locks.computeIfAbsent(p.getUniqueId(), k -> new ReentrantLock());
-        if (!lock.tryLock()) {
+        if (!TransactionLocks.tryAcquire(lock)) {
             p.sendMessage("§eYou already have a transaction processing. Please wait.");
             return;
         }
@@ -4783,7 +5061,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
                     // Never repair a balance while another economy transaction for this
                     // player is in progress, otherwise a failed purchase could be
                     // accidentally credited twice.
-                    if (!lock.tryLock()) continue;
+                    if (!TransactionLocks.tryAcquire(lock)) continue;
 
                     try {
                         Long balance = bankBalance(discordId);
@@ -4901,7 +5179,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         return canFitItems(p, splitStackItems(material, amount));
     }
 
-    private boolean canFitItems(Player p, List<ItemStack> items) {
+    boolean canFitItems(Player p, List<ItemStack> items) {
         int size = p.getInventory().getStorageContents().length;
         Inventory simulation = Bukkit.createInventory(null, size);
         simulation.setContents(cloneContents(p.getInventory().getStorageContents()));
@@ -5104,7 +5382,7 @@ public final class CoolWipsEconomy extends JavaPlugin implements CommandExecutor
         }
     }
 
-    private String linkedId(Player p) {
+    String linkedId(Player p) {
         try {
             String id = DiscordSRV.getPlugin().getAccountLinkManager().getDiscordId(p.getUniqueId());
             if (id == null || id.isBlank()) {

@@ -1,11 +1,11 @@
 # CoolWipsProgression Development Notes
 
-Current version: 1.1.5
+Current version: 1.1.9
 
 ## Versioning rule
 
 Every bug fix increments the patch version by 1:
-1.1.0 -> 1.1.1 -> 1.1.2 -> 1.1.3 -> 1.1.4 -> 1.1.5 -> 1.1.4
+1.1.5 -> 1.1.6 -> 1.1.7 -> 1.1.8 -> 1.1.9
 
 Keep the version synchronized in:
 - ProgressionControl/pom.xml
@@ -42,13 +42,24 @@ Dimensions:
 - Non-player portal entities, including boats carrying players, cannot enter locked Nether/End.
 - Nether portal creation and Nether portal pairing are blocked while Nether is locked.
 - Respawn locations inside locked Nether/End are redirected to the overworld.
+- Unlocked Nether/End respawns retain their original bed or anchor destination.
+- Dimension ejections and redirected respawns use the overworld spawn, avoiding unsafe coordinates copied from another dimension.
+- If no overworld is loaded, the plugin does not teleport a player back into a locked dimension as a fallback.
 - A repeating server-side safety sweep checks every online player every tick and immediately teleports players out of locked Nether/End worlds, including direct/plugin-injected world changes.
 
 Shulker:
 - Shulker shells and Shulker boxes are gated.
+- Both plain and dyed Shulker boxes are covered by pickup, crafting, placement, breaking, and dispenser checks.
 - Locked Shulker boxes cannot be placed, opened, or broken by normal players.
 - Dispensers cannot place locked Shulker boxes.
 - Inventory automation involving a Shulker Box inventory is blocked while the gate is locked.
+
+Totems:
+- EntityResurrectEvent blocks locked Totems from either hand.
+- Unlocked Totems, progression bypass, and resurrections without a Totem retain their normal behavior.
+
+Regression tests:
+- `mvn -B test` exercises dimension respawns/ejection, plain/dyed Shulker checks, and Totem resurrection events without requiring a live server.
 
 ## Build
 

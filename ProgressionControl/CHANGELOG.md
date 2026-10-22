@@ -2,6 +2,25 @@
 
 All notable changes to CoolWipsProgression are documented here.
 
+## 1.1.9
+
+- Fixed unsafe dimension ejections that reused Nether/End coordinates in the overworld. Ejections and redirected respawns now use the configured overworld spawn.
+- Avoid falling back to a locked dimension when no overworld is loaded.
+- Added event regression tests for the fixes in 1.1.6 through 1.1.9.
+
+## 1.1.8
+
+- Fixed Nether/End respawns being redirected even after the relevant progression gate had been unlocked.
+
+## 1.1.7
+
+- Fixed the Totems gate allowing resurrection: Totem use now checks EntityResurrectEvent for either hand.
+- Preserve bypass permissions, unlocked Totems, and resurrections supplied by other plugins without a Totem.
+
+## 1.1.6
+
+- Fixed plain, undyed Shulker boxes bypassing pickup, crafting, placement, breaking, and dispenser restrictions.
+
 ## 1.1.5
 
 - Fixed the 1.1.4 compile failure by adding the missing dimension safety helper methods.
