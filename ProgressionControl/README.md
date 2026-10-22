@@ -1,6 +1,6 @@
 # CoolWips Progression Control
 
-**CoolWipsProgression 1.1.5** is a standalone Paper plugin for CoolWips SMP that lets server staff manually control the server's survival progression.
+**CoolWipsProgression 1.1.9** is a standalone Paper plugin for CoolWips SMP that lets server staff manually control the server's survival progression.
 
 Every gate starts **locked** until an admin unlocks it. Unlocks are stored in the plugin configuration and survive server restarts.
 
@@ -140,7 +140,8 @@ tridents
 - Pickup, crafting, placing, and use of gated items
 
 **Totems**
-- Totem pickup and use/consumption handling
+- Totem pickup and resurrection from either hand are blocked while locked
+- Progression bypass and the unlocked gate allow normal Totem use
 
 **Tridents**
 - Trident pickup and use handling
@@ -174,12 +175,14 @@ The plugin is designed to stop normal-player progression through the event paths
 
 Other plugins or administrator commands can still place an Elytra in a player's normal inventory, but the plugin prevents it from being equipped or used. Direct chest-slot insertion is removed by the server-side safety sweep.
 
+Respawns in unlocked dimensions keep their normal bed or respawn-anchor destination. Locked-dimension respawns and ejections use the overworld's configured spawn instead of copying coordinates from another dimension. Keep an overworld loaded and its spawn safe for players.
+
 ## Installation
 
 Copy:
 
 ```text
-CoolWipsProgression-1.1.5.jar
+CoolWipsProgression-1.1.9.jar
 ```
 
 into:
@@ -207,7 +210,7 @@ mvn -B clean package
 The output is:
 
 ```text
-target/CoolWipsProgression-1.1.5.jar
+target/CoolWipsProgression-1.1.9.jar
 ```
 
 The repository also contains a GitHub Actions build workflow at:
@@ -225,4 +228,4 @@ See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
 ## Bug-fix versioning
 
-Each bug fix increments the patch version by 1 (for example, 1.1.0 -> 1.1.1 -> 1.1.5). The GitHub Actions build reads the Maven version automatically, uploads the matching JAR, and commits the built JAR to the root of `ProgressionControl/`.
+Each bug fix increments the patch version by 1 (for example, 1.1.0 -> 1.1.1 -> 1.1.9). The GitHub Actions build reads the Maven version automatically, uploads the matching JAR, and commits the built JAR to the root of `ProgressionControl/`.

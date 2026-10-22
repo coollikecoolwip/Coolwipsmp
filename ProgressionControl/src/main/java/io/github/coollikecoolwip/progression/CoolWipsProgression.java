@@ -37,6 +37,7 @@ import org.bukkit.event.player.PlayerRespawnEvent;
 import org.bukkit.event.player.PlayerTeleportEvent;
 import org.bukkit.event.world.PortalCreateEvent;
 import org.bukkit.event.entity.EntityPortalEvent;
+import org.bukkit.event.entity.EntityResurrectEvent;
 import org.bukkit.event.entity.EntityToggleGlideEvent;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemStack;
@@ -96,17 +97,20 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
         if (gate == null || unlocked(gate)) return;
 
+        Optional<Location> safe = findOverworldSpawn();
+        if (safe.isEmpty()) return;
+
         if (player.isInsideVehicle()) {
             player.leaveVehicle();
         }
 
-        Location safe = findSafeOverworld(player.getLocation());
-        player.teleport(safe);
-        deny(player, gate);
+        if (player.teleport(safe.get())) {
+            deny(player, gate);
+        }
     }
 
     private boolean destinationIsLockedDimension(Location destination, Gate gate) {
-        if (destination == null || destination.getWorld() == null) return false;
+        if (unlocked(gate) || destination == null || destination.getWorld() == null) return false;
 
         World.Environment environment = destination.getWorld().getEnvironment();
         return (gate == Gate.NETHER && environment == World.Environment.NETHER)
@@ -154,7 +158,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
             return Gate.NETHERITE;
         }
         if (type == Material.ELYTRA) return Gate.ELYTRA;
-        if (type == Material.SHULKER_SHELL || type.name().endsWith("_SHULKER_BOX")) return Gate.SHULKER;
+        if (type == Material.SHULKER_SHELL || isShulkerBox(type)) return Gate.SHULKER;
         if (type == Material.TOTEM_OF_UNDYING) return Gate.TOTEMS;
         if (type == Material.TRIDENT) return Gate.TRIDENTS;
         return null;
@@ -219,7 +223,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     }
 
     private boolean isShulkerBox(Material type) {
-        return type != null && type.name().endsWith("_SHULKER_BOX");
+        return type == Material.SHULKER_BOX || (type != null && type.name().endsWith("_SHULKER_BOX"));
     }
 
     private boolean isShulkerInventory(Inventory inventory) {
@@ -500,6 +504,16 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onTotemResurrect(EntityResurrectEvent event) {
+        // Totems trigger resurrection, not PlayerItemConsumeEvent. A null hand
+        // represents resurrection supplied by another plugin without a totem.
+        if (!(event.getEntity() instanceof Player player) || event.getHand() == null) return;
+        if (locked(player, Gate.TOTEMS)) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onIgnite(BlockIgniteEvent event) {
         Player player = event.getPlayer();
         if (player == null || unlocked(Gate.NETHER) || bypass(player)) return;
@@ -547,7 +561,7 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
         Location respawn = event.getRespawnLocation();
         if (destinationIsLockedDimension(respawn, Gate.NETHER)
                 || destinationIsLockedDimension(respawn, Gate.END)) {
-            event.setRespawnLocation(findSafeOverworld(respawn));
+            findOverworldSpawn().ifPresent(event::setRespawnLocation);
         }
     }
 
@@ -573,29 +587,16 @@ public final class CoolWipsProgression extends JavaPlugin implements Listener, C
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onChangedWorld(PlayerChangedWorldEvent event) {
-        Player player = event.getPlayer();
-        World world = player.getWorld();
-
-        if (world.getEnvironment() == World.Environment.NETHER
-                && !unlocked(Gate.NETHER) && !bypass(player)) {
-            player.teleport(findSafeOverworld(player.getLocation()));
-            deny(player, Gate.NETHER);
-        } else if (world.getEnvironment() == World.Environment.THE_END
-                && !unlocked(Gate.END) && !bypass(player)) {
-            player.teleport(findSafeOverworld(player.getLocation()));
-            deny(player, Gate.END);
-        }
+        enforceDimensionBan(event.getPlayer());
     }
 
-    private Location findSafeOverworld(Location source) {
-        World overworld = getServer().getWorlds().stream()
+    private Optional<Location> findOverworldSpawn() {
+        // Coordinates from the Nether or End can be underground, in mid-air,
+        // or outside the world border in the overworld. Use its configured spawn.
+        return getServer().getWorlds().stream()
                 .filter(w -> w.getEnvironment() == World.Environment.NORMAL)
-                .findFirst()
-                .orElse(getServer().getWorlds().get(0));
-
-        Location result = source.clone();
-        result.setWorld(overworld);
-        return result;
+                .map(World::getSpawnLocation)
+                .findFirst();
     }
 
     @Override

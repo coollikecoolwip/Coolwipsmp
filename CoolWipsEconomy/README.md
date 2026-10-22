@@ -1,4 +1,4 @@
-# CoolWips Economy 1.4.17
+# CoolWips Economy 1.5.0
 
 Simple Paper 26.2 economy plugin for CoolWips SMP.
 
@@ -10,7 +10,7 @@ Requirements:
 
 Install:
 1. Build with build.bat.
-2. Put the built `target/CoolWipsEconomy-1.4.17.jar` in `plugins/`.
+2. Replace the old economy JAR in `plugins/` with `target/CoolWipsEconomy-1.5.0.jar` (keep only one version).
 3. Start the server once.
 4. Open plugins/CoolWipsEconomy/config.yml.
 5. Put your UnbelievaBoat API token in api-token.
@@ -18,6 +18,7 @@ Install:
 7. Restart the server.
 
 Commands:
+- /sell (opens a chest menu that automatically sells deposited items)
 - /sell <item> [amount]
 - /sellall <item>
 - /prices [page]
@@ -29,7 +30,8 @@ Commands:
 - /repair (paid; repairs damaged item in main hand)
 - /shop [page]
 - /pay <player> <item> [amount]
-- /sellchest create|remove|status
+- /sellchest (also opens the sell menu; requires the sell permission)
+- /sellchest create|remove|status (physical chest management)
 - /cweconomy reload
 - /cweconomy status
 - /cweconomy stats
@@ -52,6 +54,16 @@ Sales and purchases are serialized per player. The configured buy tax is applied
 Edit `prices.txt` and `shop.txt` in this folder on GitHub, then run `/cweconomy reload`. The legacy `prices/` YAML folder is no longer used and has been removed.
 
 Sell chests: use `/sellchest create` while looking at a chest. Put items with a sell price inside, then close the chest. The priced items are automatically sold for the normal `/sell` price after tax; items without a sell price stay in the chest. Only the owner can open or break the sell chest (operators can manage it).
+
+Sell menu: `/sell` or `/sellchest` opens a private 27-slot chest. Place, shift-click, or drag the items you want to sell into it; the plugin automatically sells batches after the movement finishes. It uses your normal market prices, tax, blocked-item settings, Discord link, and per-sale limits. There is no confirmation button: putting an item in the menu authorizes its sale. Existing `/sell <item> [amount]`, `/sell confirm`, and `/sellall <item>` commands still work. Unpriced or blocked items, batches below $1 after tax, and items beyond the batch limits are returned on close. If the inventory is full, returned items drop at the player; if a payment fails after logout, they drop at the menu's opening location. Plugin shutdown returns items still in open menus without starting payments.
+
+Menu payment recovery: each batch writes its exact ItemStacks, player/account IDs, payout and sale ID into `plugins/CoolWipsEconomy/pending-menu-sales/` before contacting the bank. Normal confirmed completion removes this record. If a payment is ambiguous or shutdown interrupts it, the record remains and startup warns staff. Check the bank transaction (including the sale ID in its reason) before restoring any listed items; do not automatically replay these records or retry payments. A `bank-result: APPLIED` record means the bank confirmed payment; `UNKNOWN` or no result requires checking the bank. Back up these records along with the plugin data.
+
+Version 1.5.0 also prevents server-thread commands from reentering an in-flight transaction, keeps player-trade items in escrow until the seller payment result is known, and fixes connected-chest ownership and cancelled-break handling. Build workflows now test branch/PR code and publish JARs only from current `main` source.
+
+Pending player-trade escrow is also saved in `plugins/CoolWipsEconomy/pending-trades/` before the seller credit starts. If shutdown interrupts delivery, staff must check both accounts and the recorded seller payment result before delivering escrow or issuing any refund. Resolved delivery/rollback removes the record. These recovery records are for staff reconciliation, not automatic replay.
+
+Development checks: run `mvn clean verify` with Java 25. Regression tests cover sell-menu lifecycle, transaction exclusion, physical chest protection and trade escrow. Test the menu on a staging Paper server with DiscordSRV and a test bank account before replacing a production plugin.
 
 ### Economy integrity
 

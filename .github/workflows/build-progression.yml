@@ -1,6 +1,11 @@
 name: Build CoolWips Progression
 
 on:
+  pull_request:
+    paths:
+      - 'ProgressionControl/pom.xml'
+      - 'ProgressionControl/src/**'
+      - '.github/workflows/build-progression.yml'
   push:
     paths:
       - 'ProgressionControl/pom.xml'
@@ -12,7 +17,7 @@ permissions:
   contents: write
 
 concurrency:
-  group: progression-build
+  group: progression-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -52,8 +57,15 @@ jobs:
           retention-days: 14
 
       - name: Commit built JAR to repository
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         working-directory: .
         run: |
+          git fetch origin main
+          if [ "$(git rev-parse HEAD:ProgressionControl)" != "$(git rev-parse origin/main:ProgressionControl)" ]; then
+            echo "Main changed during the build; the newer run will publish its JAR."
+            exit 0
+          fi
+          git merge --ff-only origin/main
           cp "ProgressionControl/target/CoolWipsProgression-${VERSION}.jar" "ProgressionControl/CoolWipsProgression-${VERSION}.jar"
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
