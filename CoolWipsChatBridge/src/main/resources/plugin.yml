@@ -1,0 +1,7 @@
+name: CoolWipsChatBridge
+version: 1.0.0
+main: local.coolwips.chatbridge.CoolWipsChatBridge
+api-version: '26.2'
+depend: [DiscordSRV]
+description: Relays only player chat between Minecraft and one Discord channel.
+
