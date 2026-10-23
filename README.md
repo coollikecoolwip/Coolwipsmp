@@ -34,4 +34,4 @@ Located in `CoolWipsCommandBridge/`.
 - Keeps the standalone bot's Discord slash commands available through DiscordSRV
 - Provides Minecraft status and owner-controlled server commands
 
-Builds are handled automatically by GitHub Actions.
+GitHub Actions builds all four plugins, uploads JAR artifacts, and keeps the current JARs in the repository.
