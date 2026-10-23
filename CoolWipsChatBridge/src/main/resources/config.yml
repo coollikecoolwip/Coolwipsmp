@@ -1,0 +1,13 @@
+# Reuses DiscordSRV's existing bot connection and token.
+discord-channel-id: "1523912465384214729"
+minecraft-to-discord: true
+discord-to-minecraft: true
+discord-message-format: "[Discord] %name%: %message%"
+minecraft-message-format: "**%player%**: %message%"
+
+# Discord slash-command interactions are not ordinary messages and are never received by this bridge.
+ignored-discord-prefixes:
+  - "!"
+  - "/"
+  - "?"
+
