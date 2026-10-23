@@ -1,0 +1,7 @@
+name: CoolWipsCommandBridge
+version: 1.2.4
+main: local.coolwips.discordbridge.CoolWipsCommandBridge
+api-version: '1.13'
+depend: [DiscordSRV]
+description: Handles Minecraft commands and preserves the standalone bot's slash command list.
+
