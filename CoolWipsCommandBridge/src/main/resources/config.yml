@@ -1,0 +1,7 @@
+# Minecraft slash commands are locked to user 1025176521054355537.
+# These legacy settings are retained for compatibility and no longer grant access.
+moderator-role-ids: []
+
+# Administrator bypass is disabled by the command handler, regardless of this legacy value.
+allow-administrators: false
+
