@@ -13,4 +13,25 @@ Located in `CoolWipsEconomy/`.
 - GitHub-managed sell prices
 - Operator-only sale maintenance controls
 
+### CoolWips Progression Control
+Located in `ProgressionControl/`.
+
+- Paper 26.2 / Java 25
+- Staff-controlled survival progression gates
+- Persistent unlock state and hard-disabled Elytra
+
+### CoolWips Chat Bridge 1.0.0
+Located in `CoolWipsChatBridge/`.
+
+- Paper 26.2 / Java 25
+- Relays player chat and one Discord text channel through DiscordSRV
+- No separate bot token
+
+### CoolWips Command Bridge 1.2.4
+Located in `CoolWipsCommandBridge/`.
+
+- Paper 26.2 / Java 25
+- Keeps the standalone bot's Discord slash commands available through DiscordSRV
+- Provides Minecraft status and owner-controlled server commands
+
 Builds are handled automatically by GitHub Actions.
